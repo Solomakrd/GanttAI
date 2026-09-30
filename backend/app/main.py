@@ -1,13 +1,20 @@
 from datetime import date, timedelta
+import asyncio
+import json
 from typing import Annotated, Optional
 
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel
 
+from .agent import AgentConfigurationError, OpenAIPlanAgent
+from .db import create_schema
 from .excel import ExcelError, MAX_FILE_BYTES, read_workbook, write_workbook
+from .models import Plan, ProjectSnapshot, Task, WorkspaceSnapshot
+from .plan_service import PlanEditError, validate_plan
+from .repositories import AccessDenied, ProjectRepository, VersionConflict
 
 
 class ImportBodyLimit:
@@ -17,7 +24,10 @@ class ImportBodyLimit:
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] != "http" or scope["path"] != "/api/plan/import" or scope["method"] != "POST":
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        is_import = scope["path"] == "/api/plan/import" or (scope["path"].startswith("/api/projects/") and scope["path"].endswith("/import"))
+        if not is_import or scope["method"] != "POST":
             return await self.app(scope, receive, send)
         body = bytearray()
         while True:
@@ -41,29 +51,6 @@ class ImportBodyLimit:
             return await receive()
 
         await self.app(scope, replay, send)
-
-
-class Task(BaseModel):
-    id: str = Field(min_length=1)
-    task: str = Field(min_length=1)
-    description: str = ""
-    assignee: str = Field(min_length=1)
-    duration: int = Field(gt=0)
-    start_date: date
-    end_date: date
-    predecessors: list[str] = Field(default_factory=list)
-
-    @field_validator("end_date")
-    @classmethod
-    def end_date_follows_start(cls, value: date, info):
-        start = info.data.get("start_date")
-        if start and value < start:
-            raise ValueError("end_date must be on or after start_date")
-        return value
-
-
-class Plan(BaseModel):
-    tasks: list[Task]
 
 
 def seeded_tasks() -> list[Task]:
@@ -132,9 +119,55 @@ app.add_middleware(
 )
 
 
+def repository():
+    if not hasattr(app.state, "repository"):
+        create_schema()
+        app.state.repository = ProjectRepository()
+    return app.state.repository
+
+
+def workspace_token(value):
+    if not value:
+        raise HTTPException(status_code=401, detail="A workspace token is required.")
+    return value
+
+
+class ProjectCreated(ProjectSnapshot):
+    workspace_token: str
+
+
+class UndoRequest(BaseModel):
+    expected_version: int
+
+
 @app.get("/api/plan", response_model=Plan)
 def get_plan() -> Plan:
     return Plan(tasks=seeded_tasks())
+
+
+@app.post("/api/projects", response_model=ProjectCreated)
+def create_project(x_workspace_token: Optional[str] = Header(None)) -> ProjectCreated:
+    try:
+        token, snapshot = repository().create(Plan(tasks=seeded_tasks()), x_workspace_token)
+    except AccessDenied as error:
+        raise HTTPException(status_code=404, detail="Workspace not found.") from error
+    return ProjectCreated(**snapshot.model_dump(), workspace_token=token)
+
+
+@app.get("/api/workspace", response_model=WorkspaceSnapshot)
+def get_workspace(x_workspace_token: Optional[str] = Header(None)) -> WorkspaceSnapshot:
+    try:
+        return repository().resolve(workspace_token(x_workspace_token))
+    except AccessDenied as error:
+        raise HTTPException(status_code=404, detail="Workspace not found.") from error
+
+
+@app.get("/api/projects/{project_id}", response_model=ProjectSnapshot)
+def get_project(project_id: str, x_workspace_token: Optional[str] = Header(None)) -> ProjectSnapshot:
+    try:
+        return repository().load(project_id, workspace_token(x_workspace_token))
+    except AccessDenied as error:
+        raise HTTPException(status_code=404, detail="Project not found.") from error
 
 
 @app.exception_handler(ExcelError)
@@ -154,6 +187,26 @@ async def import_plan(file: UploadFile = File(...), start_date: Optional[date] =
         await file.close()
 
 
+@app.post("/api/projects/{project_id}/import", response_model=ProjectSnapshot)
+async def import_project_plan(project_id: str, file: UploadFile = File(...), start_date: Optional[date] = Form(None),
+                              expected_version: int = Form(...), x_workspace_token: Optional[str] = Header(None)) -> ProjectSnapshot:
+    token = workspace_token(x_workspace_token)
+    try:
+        if not file.filename or not file.filename.lower().endswith(".xlsx"):
+            raise ExcelError("Choose an .xlsx workbook.")
+        data = await file.read(MAX_FILE_BYTES + 1)
+        candidate = Plan.model_validate(await run_in_threadpool(read_workbook, data, start_date))
+        repository().commit_plan(project_id, token, expected_version, candidate, "excel",
+                                 system_message=f"Imported {len(candidate.tasks)} tasks from Excel.")
+        return repository().load(project_id, token)
+    except VersionConflict as error:
+        raise HTTPException(status_code=409, detail="The plan changed while the workbook was importing. Reload and retry.") from error
+    except AccessDenied as error:
+        raise HTTPException(status_code=404, detail="Project not found.") from error
+    finally:
+        await file.close()
+
+
 @app.post("/api/plan/export")
 def export_plan(plan: Plan) -> Response:
     data = write_workbook([task.model_dump() for task in plan.tasks])
@@ -162,3 +215,110 @@ def export_plan(plan: Plan) -> Response:
 
 
 PlanResponse = Annotated[Plan, "Validated plan response"]
+
+
+@app.post("/api/projects/{project_id}/undo", response_model=ProjectSnapshot)
+def undo_project(project_id: str, body: UndoRequest, x_workspace_token: Optional[str] = Header(None)) -> ProjectSnapshot:
+    token = workspace_token(x_workspace_token)
+    try:
+        repository().undo(project_id, token, body.expected_version)
+        return repository().load(project_id, token)
+    except VersionConflict as error:
+        raise HTTPException(status_code=409, detail="The plan changed before undo completed. Reload and retry.") from error
+    except AccessDenied as error:
+        raise HTTPException(status_code=404, detail="Project not found.") from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+async def run_chat(websocket, project_id, token, payload):
+    completion = None
+    expected_version = payload.get("expected_version")
+    message = payload.get("content")
+    if not isinstance(expected_version, int) or not isinstance(message, str) or not message.strip() or len(message) > 10000:
+        await websocket.send_json({"type": "error", "code": "invalid_request", "message": "Send a non-empty message and the current plan version."})
+        return
+    try:
+        snapshot = await asyncio.to_thread(repository().load, project_id, token)
+        if snapshot.version != expected_version:
+            await websocket.send_json({"type": "error", "code": "stale", "message": "The plan changed. Reload and retry."})
+            return
+
+        async def status(event):
+            await websocket.send_json(event)
+
+        agent_factory = getattr(app.state, "agent_factory", OpenAIPlanAgent)
+        agent = agent_factory()
+        candidate, reply, changed = await agent.run(snapshot.plan, message.strip(), snapshot.messages, status)
+        if changed:
+            candidate = validate_plan(candidate)
+            # Keep the final transaction on this task so cancellation cannot outlive a detached commit thread.
+            version = repository().commit_plan(project_id, token, expected_version, candidate, "chat", message.strip(), reply)
+            completion = {"type": "complete", "version": version, "plan": candidate.model_dump(mode="json"), "message": reply}
+            await websocket.send_json(completion)
+            return True
+        else:
+            await asyncio.to_thread(repository().append_message, project_id, token, "user", message.strip())
+            await asyncio.to_thread(repository().append_message, project_id, token, "assistant", reply)
+            await websocket.send_json({"type": "clarification", "version": expected_version, "message": reply})
+    except VersionConflict:
+        await websocket.send_json({"type": "error", "code": "stale", "message": "The plan changed while the request was running. Reload and retry."})
+    except AgentConfigurationError as error:
+        await websocket.send_json({"type": "error", "code": "configuration", "message": str(error)})
+    except PlanEditError as error:
+        await websocket.send_json({"type": "error", "code": "invalid_edit", "message": str(error)})
+    except asyncio.CancelledError:
+        if completion is not None:
+            await websocket.send_json(completion)
+            return True
+        raise
+    except Exception:
+        await websocket.send_json({"type": "error", "code": "processing", "message": "The plan could not be updated. Your existing plan was kept; retry when ready."})
+
+
+@app.websocket("/api/projects/{project_id}/chat")
+async def project_chat(websocket: WebSocket, project_id: str):
+    await websocket.accept()
+    try:
+        auth_text = await asyncio.wait_for(websocket.receive_text(), timeout=5)
+        if len(auth_text) > 4096:
+            await websocket.close(code=4401)
+            return
+        auth = json.loads(auth_text)
+        if not isinstance(auth, dict) or auth.get("type") != "auth" or not isinstance(auth.get("token"), str):
+            await websocket.close(code=4401)
+            return
+        token = auth["token"]
+        snapshot = await asyncio.to_thread(repository().load, project_id, token)
+    except asyncio.TimeoutError:
+        await websocket.close(code=4408)
+        return
+    except (AccessDenied, json.JSONDecodeError, RuntimeError, TypeError, WebSocketDisconnect):
+        await websocket.close(code=4401)
+        return
+    await websocket.send_json({"type": "connected", "version": snapshot.version})
+    active = None
+    try:
+        while True:
+            payload = await websocket.receive_json()
+            if not isinstance(payload, dict):
+                await websocket.send_json({"type": "error", "code": "invalid_request", "message": "Send a valid chat message."})
+                continue
+            if payload.get("type") == "cancel":
+                if active and not active.done():
+                    active.cancel()
+                    committed = False
+                    try:
+                        committed = bool(await active)
+                    except asyncio.CancelledError:
+                        pass
+                    if not committed:
+                        await websocket.send_json({"type": "cancelled", "message": "Request cancelled. The plan was not changed."})
+                continue
+            if payload.get("type") != "message" or (active and not active.done()):
+                await websocket.send_json({"type": "error", "code": "busy", "message": "Wait for the current request or cancel it first."})
+                continue
+            active = asyncio.create_task(run_chat(websocket, project_id, token, payload))
+    except WebSocketDisconnect:
+        if active and not active.done():
+            active.cancel()

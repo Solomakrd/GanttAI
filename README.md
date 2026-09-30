@@ -1,15 +1,24 @@
 # GanttAI
 
-React Gantt timeline backed by FastAPI. The initial view loads a deterministic five-task seed. Import an Excel workbook to replace the displayed plan, or export the plan currently on screen.
+React Gantt timeline backed by FastAPI and PostgreSQL. The initial project contains a deterministic five-task seed. Import/export Excel or use the adjacent OpenAI/MCP chat to apply validated bulk edits as immutable plan versions.
 
 ## Run locally
 
-Python 3.9+ and a current Node.js LTS release are required.
+Python 3.10+, a current Node.js LTS release, Docker, and an OpenAI API key are required for the complete application.
+
+```sh
+cp .env.example .env
+docker compose up -d postgres
+```
+
+Set `OPENAI_API_KEY` and the required `OPENAI_MODEL` in the server environment. The key is used only by FastAPI and is never sent to or stored by the browser/database. Then migrate and run the API:
 
 ```sh
 cd backend
 python3 -m venv .venv
 ./.venv/bin/python -m pip install -r requirements.txt
+set -a; source ../.env; set +a
+./.venv/bin/alembic upgrade head
 ./.venv/bin/python -m uvicorn app.main:app --reload --port 8000
 ```
 
@@ -52,7 +61,13 @@ On reimport:
 - Supplied dates are **validated and preserved**, even if another project start date is selected. Their inclusive range must match duration, and every successor must start after its predecessors finish. Gaps are allowed. Invalid dates are rejected rather than silently rescheduled.
 - Imports are atomic. A validation or network error keeps the current chart and allows retry. File selection can be repeated with the same filename after corrections.
 
-Imported plans live **only in browser memory until reload**. Reload restores the seed. Import returns a `Plan` and does not persist data on the server or affect other users. Export accepts the displayed `Plan` rather than reading a shared server-side plan.
+Imported plans are saved as immutable versions in the active PostgreSQL project. Reload restores the workspace's project list plus its latest project and conversation. The browser stores only one anonymous workspace token; PostgreSQL stores its SHA-256 hash on the workspace, which may own multiple projects. **New project** adds a seeded project without replacing the token, and the project selector restores earlier projects. Concurrent Excel/chat results use an expected version and cannot overwrite newer state.
+
+## Plan chat
+
+The assistant supports adding, renaming, describing, reassigning, moving, resizing and deleting tasks, plus replacing dependencies. Dates are inclusive calendar days. Schedule-changing tasks and their descendants are rescheduled while unrelated tasks retain their dates. Ambiguous requests produce a clarification without changing the plan; **Cancel** and failures preserve the exact current version.
+
+The model can edit only through the official MCP SDK's in-process server/client in `backend/app/mcp_server.py`. There is no public MCP transport and no filesystem, shell, database, credential or arbitrary network tool. WebSocket authentication is the first bounded protocol message, so workspace tokens do not appear in URLs. WebSockets expose bounded lifecycle states, tool names, user-safe results, final messages and validated plans, never hidden reasoning or provider payloads. Each successful request is validated and committed once in a PostgreSQL transaction.
 
 ### Limits and API
 
@@ -66,6 +81,11 @@ Endpoints:
 - `GET /api/plan`: fresh seeded `Plan`.
 - `POST /api/plan/import`: multipart `file` and `start_date` (`YYYY-MM-DD`, required for undated tasks); returns validated `Plan`.
 - `POST /api/plan/export`: JSON `{"tasks": [...]}` using the existing ID-based task contract; returns an `.xlsx` download.
+- `POST /api/projects`: creates a persisted seeded project and anonymous workspace token.
+- `GET /api/workspace`: lists the token's projects and restores its latest project, plan version and messages.
+- `POST /api/projects/{id}/import`: version-checked persisted Excel import.
+- `POST /api/projects/{id}/undo`: writes the prior content as a new immutable version.
+- `WS /api/projects/{id}/chat`: version-checked chat, safe status events and atomic plan replacement.
 
 Workbook errors use `detail: {message, sheet, row, column}` where location is available, with HTTP 422 for invalid workbooks or 413 for file/expanded-size limits. FastAPI request-schema errors use its standard `detail` array; the UI handles both.
 
@@ -83,5 +103,13 @@ npm run build
 ```
 
 Backend tests exercise actual multipart/import/export routes, scheduling, graph validation, size/row/date limits, literal text and seeded/imported round trips. Frontend tests cover date selection, cancellation, atomic chart replacement, export payloads and downloads, failures/retries, loading locks and selecting the same file again.
+
+To run the real PostgreSQL migration/JSONB/locking integration test in an isolated temporary schema:
+
+```sh
+TEST_DATABASE_URL=postgresql+psycopg://ganttai:ganttai@localhost:5432/ganttai sh backend/scripts/test-postgres.sh
+```
+
+Provider calls are mocked in automated tests. To exercise chat manually, configure a development key and test clarification, a multi-edit request, cancellation, stale Excel/chat operations, undo, reload, and a 375px viewport. Do not record API keys or raw provider payloads.
 
 For browser verification, run both servers and import the sample dependency chain above; export and reimport it with a different selected start date and confirm the original dates remain. Try a workbook with a duplicate task name and confirm the chart remains unchanged. Repeat at desktop and 375px-wide viewports, checking file/date controls, feedback, horizontal timeline scrolling and zoom/fit actions.

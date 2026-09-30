@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { exportPlan, importPlan } from '../api'
+import { exportPlan, importProjectPlan } from '../api'
 
-export function ExcelControls({ tasks, disabled, onImport }) {
+export function ExcelControls({ tasks, project, disabled, onImport, onOperation }) {
   const [file, setFile] = useState(null)
   const [startDate, setStartDate] = useState('')
   const [operation, setOperation] = useState(null)
@@ -21,15 +21,17 @@ export function ExcelControls({ tasks, disabled, onImport }) {
     if (disabled || activeRequest.current || (kind === 'import' && (!file || !startDate))) return
     const controller = new AbortController()
     activeRequest.current = controller
+    onOperation?.(true)
     setOperation(kind)
     setFeedback(null)
     try {
       if (kind === 'import') {
-        const imported = await importPlan(file, startDate, controller.signal)
+        const imported = await importProjectPlan(project, file, startDate, controller.signal)
         if (controller.signal.aborted) return
-        onImport(imported)
+        onImport(project?.projectId ? imported : imported.tasks)
         clearSelection()
-        setFeedback({ message: `Imported ${imported.length} tasks. This plan stays in this tab until reload.` })
+        const count = imported.tasks.length
+        setFeedback({ message: `Imported ${count} tasks. The project is saved and available after reload.` })
       } else {
         await exportPlan(tasks, controller.signal)
         if (controller.signal.aborted) return
@@ -39,6 +41,7 @@ export function ExcelControls({ tasks, disabled, onImport }) {
       if (!controller.signal.aborted) setFeedback({ error: true, message: error.message || 'Workbook operation failed. Please retry.' })
     } finally {
       activeRequest.current = null
+      onOperation?.(false)
       if (!controller.signal.aborted) setOperation(null)
     }
   }
@@ -58,7 +61,7 @@ export function ExcelControls({ tasks, disabled, onImport }) {
         setFeedback({ error: true, message: 'Choose an .xlsx workbook no larger than 2 MiB.' })
       } else setFile(selected)
     }} />
-    <p id="excel-help">Use the first worksheet with задача, описание, исполнитель, длительность, предшественники. Import replaces the displayed plan only after validation; reload restores the seed.</p>
+    <p id="excel-help">Use the first worksheet with задача, описание, исполнитель, длительность, предшественники. Import creates a saved plan version only after validation.</p>
     {file && <form onSubmit={(event) => { event.preventDefault(); run('import') }}>
       <p className="selected-file">Selected: <strong>{file.name}</strong></p>
       <label htmlFor="project-start">Project start date</label>

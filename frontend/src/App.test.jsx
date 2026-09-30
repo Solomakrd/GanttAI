@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import App from './App'
 
 const plan = { tasks: [{ id: 'one', task: 'First task', description: '', assignee: 'Maya', duration: 2, start_date: '2026-10-05', end_date: '2026-10-06', predecessors: [] }, { id: 'two', task: 'Second task', description: '', assignee: 'Leo', duration: 1, start_date: '2026-10-07', end_date: '2026-10-07', predecessors: ['one'] }] }
 
-beforeEach(() => { vi.restoreAllMocks() })
+beforeEach(() => { vi.restoreAllMocks(); localStorage.clear() })
 afterEach(() => { cleanup() })
 
 describe('plan view', () => {
@@ -87,5 +87,113 @@ describe('plan view', () => {
     expect(screen.getAllByText('First task').length).toBeGreaterThan(0)
     expect(screen.getAllByText('Second task').length).toBeGreaterThan(0)
     expect(screen.getByRole('button', { name: 'Import plan' })).toBeEnabled()
+  })
+
+  it('updates the chart from a versioned chat result and rejects a stale result', async () => {
+    class Socket {
+      static instance
+      constructor() { this.listeners = {}; Socket.instance = this }
+      addEventListener(name, callback) { this.listeners[name] = callback }
+      send() {}
+      close() {}
+      emit(payload) { this.listeners.message({ data: JSON.stringify(payload) }) }
+    }
+    vi.stubGlobal('WebSocket', Socket)
+    localStorage.clear()
+    vi.spyOn(global, 'fetch').mockResolvedValue({ ok: true, json: async () => ({
+      project_id: 'p1', conversation_id: 'c1', workspace_token: 'token', version: 1, plan, messages: [],
+    }) })
+    render(<App />)
+    await screen.findAllByText('First task')
+    const updated = { ...plan.tasks[0], task: 'Updated by chat' }
+    act(() => Socket.instance.emit({ type: 'complete', version: 2, plan: { tasks: [updated, plan.tasks[1]] }, message: 'Updated.' }))
+    expect((await screen.findAllByText('Updated by chat')).length).toBeGreaterThan(0)
+    act(() => Socket.instance.emit({ type: 'complete', version: 4, plan: { tasks: [{ ...updated, task: 'Stale result' }, plan.tasks[1]] }, message: 'Stale.' }))
+    expect(screen.getByRole('alert')).toHaveTextContent('stale chat result was ignored')
+    expect(screen.queryByText('Stale result')).not.toBeInTheDocument()
+  })
+
+  it('keeps one workspace token while creating and restoring multiple projects', async () => {
+    class Socket {
+      constructor() { this.listeners = {} }
+      addEventListener(name, callback) { this.listeners[name] = callback }
+      send() {}
+      close() {}
+    }
+    vi.stubGlobal('WebSocket', Socket)
+    const first = { project_id: 'p1', conversation_id: 'c1', workspace_token: 'workspace-token', version: 1, plan, messages: [] }
+    const secondPlan = { tasks: [{ ...plan.tasks[0], id: 'other', task: 'Other project' }] }
+    const second = { project_id: 'p2', conversation_id: 'c2', workspace_token: 'workspace-token', version: 1, plan: secondPlan, messages: [] }
+    const fetch = vi.spyOn(global, 'fetch')
+      .mockResolvedValueOnce({ ok: true, json: async () => first })
+      .mockResolvedValueOnce({ ok: true, json: async () => second })
+      .mockResolvedValueOnce({ ok: true, json: async () => first })
+
+    render(<App />)
+    await screen.findAllByText('First task')
+    fireEvent.click(screen.getByRole('button', { name: 'New project' }))
+    expect((await screen.findAllByText('Other project')).length).toBeGreaterThan(0)
+    expect(fetch.mock.calls[1][1].headers).toEqual({ 'X-Workspace-Token': 'workspace-token' })
+    expect(localStorage.getItem('ganttai.workspaceToken')).toBe('workspace-token')
+
+    fireEvent.change(screen.getByLabelText('Active project'), { target: { value: 'p1' } })
+    expect((await screen.findAllByText('First task')).length).toBeGreaterThan(0)
+    expect(fetch.mock.calls[2][0]).toContain('/api/projects/p1')
+  })
+
+  it('preserves workspace identity and project choices after undo', async () => {
+    class Socket {
+      constructor() { this.listeners = {} }
+      addEventListener(name, callback) { this.listeners[name] = callback }
+      send() {}
+      close() {}
+    }
+    vi.stubGlobal('WebSocket', Socket)
+    localStorage.setItem('ganttai.workspaceToken', 'workspace-token')
+    const active = { project_id: 'p1', conversation_id: 'c1', version: 2, plan, messages: [] }
+    const undone = { ...active, version: 3 }
+    vi.spyOn(global, 'fetch')
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ active_project: active, projects: [
+        { project_id: 'p1', version: 2, created_at: '2026-09-30' },
+        { project_id: 'p2', version: 1, created_at: '2026-09-30' },
+      ] }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => undone })
+
+    render(<App />)
+    await screen.findAllByText('First task')
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
+    await waitFor(() => expect(screen.getByLabelText('Active project')).toHaveValue('p1'))
+    expect(screen.getAllByRole('option')).toHaveLength(2)
+    expect(screen.getByRole('button', { name: 'Undo' })).toBeEnabled()
+  })
+
+  it('does not unlock an Excel import when chat disconnects', async () => {
+    class Socket {
+      static instance
+      constructor() { this.listeners = {}; Socket.instance = this }
+      addEventListener(name, callback) { this.listeners[name] = callback }
+      send() {}
+      close() {}
+      disconnect() { this.listeners.close() }
+    }
+    vi.stubGlobal('WebSocket', Socket)
+    let finishImport
+    const pendingImport = new Promise((resolve) => { finishImport = resolve })
+    const project = { project_id: 'p1', conversation_id: 'c1', workspace_token: 'token', version: 1, plan, messages: [] }
+    vi.spyOn(global, 'fetch')
+      .mockResolvedValueOnce({ ok: true, json: async () => project })
+      .mockReturnValueOnce(pendingImport)
+
+    render(<App />)
+    await screen.findAllByText('First task')
+    fireEvent.change(screen.getByLabelText('Import workbook (.xlsx)'), { target: { files: [new File(['xlsx'], 'tasks.xlsx')] } })
+    fireEvent.change(screen.getByLabelText('Project start date'), { target: { value: '2026-10-02' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Import plan' }))
+    expect(screen.getByRole('button', { name: 'New project' })).toBeDisabled()
+    act(() => Socket.instance.disconnect())
+    expect(screen.getByRole('button', { name: 'New project' })).toBeDisabled()
+
+    finishImport({ ok: true, json: async () => ({ ...project, version: 2 }) })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'New project' })).toBeEnabled())
   })
 })
