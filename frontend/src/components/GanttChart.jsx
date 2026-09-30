@@ -6,8 +6,7 @@ const ROW_HEIGHT = 66
 const LABEL_WIDTH = 224
 
 function asDay(value) {
-  const [year, month, day] = value.slice(0, 10).split('-').map(Number)
-  return Date.UTC(year, month - 1, day)
+  return new Date(`${value.slice(0, 10)}T00:00:00Z`).getTime()
 }
 
 function formatDay(day) {
