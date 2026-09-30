@@ -167,7 +167,60 @@ def test_openai_adapter_uses_only_allowlisted_tools_without_network_calls():
     assert message == "Which task should move?"
     assert not changed
     assert {tool["name"] for tool in responses.requests[0]["tools"]} == {"read_plan", "add_task", "update_task", "set_dependencies", "delete_tasks"}
+    assert "previous_response_id" not in responses.requests[1]
+    assert [item["type"] for item in responses.requests[1]["input"][-2:]] == ["function_call", "function_call_output"]
     assert any(event.get("tool") == "read_plan" for event in events)
+
+
+def test_default_client_points_to_openrouter(monkeypatch):
+    captured = {}
+
+    def client(**options):
+        captured.update(options)
+        return SimpleNamespace()
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("OPENROUTER_MODEL", "openai/gpt-5-mini")
+    monkeypatch.setattr("app.agent.AsyncOpenAI", client)
+    agent = OpenAIPlanAgent()
+    assert agent.model == "openai/gpt-5-mini"
+    assert captured == {"api_key": "test-key", "base_url": "https://openrouter.ai/api/v1"}
+
+
+def test_openrouter_can_correct_invalid_tool_arguments():
+    class Responses:
+        def __init__(self):
+            self.calls = 0
+
+        async def create(self, **request):
+            self.calls += 1
+            if self.calls == 1:
+                call = SimpleNamespace(type="function_call", name="add_task",
+                                       arguments='{"task":"Leo onboarding","assignee":"Leo","duration":0}', call_id="call-1")
+                return SimpleNamespace(output=[call], output_text="")
+            if self.calls == 2:
+                call = SimpleNamespace(type="function_call", name="add_task",
+                                       arguments='{"task":"Leo onboarding","assignee":"Leo","duration":5}', call_id="call-2")
+                return SimpleNamespace(output=[call], output_text="")
+            return SimpleNamespace(output=[], output_text="Added Leo onboarding.")
+
+    events = []
+    agent = OpenAIPlanAgent(client=SimpleNamespace(responses=Responses()), model="mock-model")
+
+    async def run():
+        async def status(event):
+            events.append(event)
+
+        return await agent.run(Plan(tasks=seeded_tasks()), "Add Leo onboarding for five days", [], status)
+
+    from app.main import seeded_tasks
+    from app.models import Plan
+    result, message, changed = asyncio.run(run())
+    assert changed
+    assert message == "Added Leo onboarding."
+    assert result.tasks[-1].task == "Leo onboarding"
+    assert result.tasks[-1].duration == 5
+    assert [event["status"] for event in events if event.get("tool") == "add_task"] == ["running", "failed", "running", "complete"]
 
 
 def test_openai_adapter_hides_unknown_tool_names():

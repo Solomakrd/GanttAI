@@ -4,6 +4,7 @@ import os
 
 from openai import AsyncOpenAI
 from mcp import Client
+from mcp.shared.exceptions import MCPError
 from pydantic import ValidationError
 
 from .mcp_server import ARGUMENT_MODELS, InternalMCPServer
@@ -19,13 +20,16 @@ class AgentConfigurationError(Exception):
 
 class OpenAIPlanAgent:
     def __init__(self, client=None, model=None, timeout=None):
-        self.model = model or os.getenv("OPENAI_MODEL")
+        self.model = model or os.getenv("OPENROUTER_MODEL")
         if not self.model:
-            raise AgentConfigurationError("Chat is not configured. Set OPENAI_MODEL on the server.")
-        if client is None and not os.getenv("OPENAI_API_KEY"):
-            raise AgentConfigurationError("Chat is not configured. Set OPENAI_API_KEY on the server.")
-        self.client = client or AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-        self.timeout = timeout or float(os.getenv("OPENAI_TIMEOUT_SECONDS", "45"))
+            raise AgentConfigurationError("Chat is not configured. Set OPENROUTER_MODEL on the server.")
+        if client is None and not os.getenv("OPENROUTER_API_KEY"):
+            raise AgentConfigurationError("Chat is not configured. Set OPENROUTER_API_KEY on the server.")
+        self.client = client or AsyncOpenAI(
+            api_key=os.getenv("OPENROUTER_API_KEY"),
+            base_url=os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
+        )
+        self.timeout = timeout or float(os.getenv("OPENROUTER_TIMEOUT_SECONDS", "45"))
 
     async def run(self, plan, message, history, status):
         return await asyncio.wait_for(self._run(plan, message, history, status), timeout=self.timeout)
@@ -41,17 +45,13 @@ class OpenAIPlanAgent:
             allowlist = {tool["name"] for tool in tools}
             inputs = [{"role": item["role"], "content": item["content"]} for item in history if item["role"] in ("user", "assistant")][-20:]
             inputs.append({"role": "user", "content": message})
-            response = None
             changed = False
             failed = False
             last_error = None
             for _ in range(31):
                 await status({"type": "status", "status": "thinking", "message": "Planning safe changes..."})
                 request = {"model": self.model, "instructions": SYSTEM_PROMPT, "input": inputs, "tools": tools,
-                           "max_output_tokens": int(os.getenv("OPENAI_MAX_OUTPUT_TOKENS", "2000"))}
-                if response is not None:
-                    request["previous_response_id"] = response.id
-                    request["input"] = inputs
+                           "max_output_tokens": int(os.getenv("OPENROUTER_MAX_OUTPUT_TOKENS", "2000"))}
                 response = await self.client.responses.create(**request)
                 calls = [item for item in response.output if getattr(item, "type", None) == "function_call"]
                 if not calls:
@@ -60,14 +60,19 @@ class OpenAIPlanAgent:
                         break
                     text = (getattr(response, "output_text", "") or "I need more information to update the plan.").strip()
                     return server.editor.plan, text, changed
-                inputs = []
+                response_items = [item.model_dump(exclude_none=True) if hasattr(item, "model_dump") else {
+                    "type": "function_call", "call_id": item.call_id, "name": item.name, "arguments": item.arguments,
+                } for item in response.output if hasattr(item, "model_dump") or getattr(item, "type", None) == "function_call"]
+                tool_outputs = []
+                round_failed = False
+                round_error = None
                 for call in calls:
                     name = call.name
                     if name not in allowlist:
-                        failed = True
-                        last_error = "Tool is not available."
-                        inputs.append({"type": "function_call_output", "call_id": call.call_id,
-                                       "output": json.dumps({"ok": False, "error": last_error})})
+                        round_failed = True
+                        round_error = "Tool is not available."
+                        tool_outputs.append({"type": "function_call_output", "call_id": call.call_id,
+                                             "output": json.dumps({"ok": False, "error": round_error})})
                         continue
                     await status({"type": "tool", "tool": name, "status": "running"})
                     try:
@@ -81,12 +86,16 @@ class OpenAIPlanAgent:
                         output = json.dumps(payload)
                         await status({"type": "tool", "tool": name, "status": "complete", "result": f"Validated {payload['task_count']} tasks."})
                     except Exception as error:
-                        failed = True
-                        detail = str(error)[:500] if isinstance(error, PlanEditError) else "Tool arguments were invalid." if isinstance(error, (ValidationError, TypeError, ValueError)) else "The tool could not complete."
-                        last_error = detail
+                        round_failed = True
+                        detail = str(error)[:500] if isinstance(error, PlanEditError) else "Tool arguments were invalid." if isinstance(error, (MCPError, ValidationError, TypeError, ValueError)) else "The tool could not complete."
+                        round_error = detail
                         output = json.dumps({"ok": False, "error": detail})
                         await status({"type": "tool", "tool": name, "status": "failed", "result": detail})
-                    inputs.append({"type": "function_call_output", "call_id": call.call_id, "output": output})
+                    tool_outputs.append({"type": "function_call_output", "call_id": call.call_id, "output": output})
+                failed = round_failed
+                last_error = round_error
+                inputs.extend(response_items)
+                inputs.extend(tool_outputs)
         if terminal_error:
             raise PlanEditError(terminal_error)
         raise RuntimeError("The edit exceeded the tool-call limit.")

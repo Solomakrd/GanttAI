@@ -1,17 +1,17 @@
 # GanttAI
 
-React Gantt timeline backed by FastAPI and PostgreSQL. The initial project contains a deterministic five-task seed. Import/export Excel or use the adjacent OpenAI/MCP chat to apply validated bulk edits as immutable plan versions.
+React Gantt timeline backed by FastAPI and PostgreSQL. The initial project contains a deterministic five-task seed. Import/export Excel or use the adjacent OpenRouter/MCP chat to apply validated bulk edits as immutable plan versions.
 
 ## Run locally
 
-Python 3.10+, a current Node.js LTS release, Docker, and an OpenAI API key are required for the complete application.
+Python 3.10+, a current Node.js LTS release, Docker, and an OpenRouter API key are required for the complete application.
 
 ```sh
 cp .env.example .env
 docker compose up -d postgres
 ```
 
-Set `OPENAI_API_KEY` and the required `OPENAI_MODEL` in the server environment. The key is used only by FastAPI and is never sent to or stored by the browser/database. Then migrate and run the API:
+Set `OPENROUTER_API_KEY` and the required OpenRouter model slug in `OPENROUTER_MODEL` (for example, `openai/gpt-5-mini`) in the server environment. Requests use `OPENROUTER_BASE_URL=https://openrouter.ai/api/v1`. The key is used only by FastAPI and is never sent to or stored by the browser/database. Then migrate and run the API:
 
 ```sh
 cd backend

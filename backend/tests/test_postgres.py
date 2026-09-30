@@ -30,7 +30,9 @@ def test_migrations_jsonb_and_optimistic_locking_on_postgresql():
             connection.execute(text(f'CREATE SCHEMA "{schema}"'))
         os.environ["DATABASE_URL"] = schema_url.render_as_string(hide_password=False)
         backend = Path(__file__).resolve().parents[1]
-        command.upgrade(Config(str(backend / "alembic.ini")), "head")
+        config = Config(str(backend / "alembic.ini"))
+        config.set_main_option("script_location", str(backend / "alembic"))
+        command.upgrade(config, "head")
 
         engine = create_engine(schema_url)
         columns = {column["name"]: column["type"] for column in inspect(engine).get_columns("plan_versions")}

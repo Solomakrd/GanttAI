@@ -89,9 +89,12 @@ class ProjectRepository:
             else:
                 workspace_id = str(uuid.uuid4())
                 session.add(WorkspaceRecord(id=workspace_id, token_hash=token_hash(new_token), created_at=now))
+                session.flush()
             session.add(ProjectRecord(id=project_id, workspace_id=workspace_id, current_version=1, created_at=now))
+            session.flush()
             session.add(PlanVersionRecord(project_id=project_id, version=1, plan=plan.model_dump(mode="json"), source="seed", created_at=now))
             session.add(ConversationRecord(id=conversation_id, project_id=project_id, created_at=now))
+            session.flush()
             session.add(MessageRecord(conversation_id=conversation_id, role="system", kind="system", content="Seed plan created.", created_at=now))
         return new_token, self.load(project_id, new_token)
 
