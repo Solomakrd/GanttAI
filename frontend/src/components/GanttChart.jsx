@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from 'react'
 import { ResizeHandle } from './ResizeHandle'
+import { routeDependencies } from './connectorRouting'
 import { useI18n } from '../i18n'
 
 const DAY = 24 * 60 * 60 * 1000
@@ -9,7 +10,6 @@ const BAR_X_INSET = 5
 const BAR_TOP = 12
 const BAR_HEIGHT = 24
 const BAR_MIN_WIDTH = 24
-const CONNECTOR_CURVE = 20
 const COLORS = ['#2376d8', '#9d77ee', '#29a96b', '#e17b52', '#0c204d']
 
 function asDay(value) {
@@ -46,7 +46,7 @@ export function GanttChart({ tasks, onSelectTask, disabled = false, widths, task
     const links = tasks.flatMap((task) => task.predecessors.flatMap((predecessor) => {
       const from = positionsById.get(predecessor)
       const to = positionsById.get(task.id)
-      return from && to ? [{ from, to, key: `${predecessor}-${task.id}` }] : []
+      return from && to ? [{ from, to, fromId: predecessor, toId: task.id, key: JSON.stringify([predecessor, task.id]) }] : []
     }))
     return {
       firstDay: first,
@@ -57,12 +57,19 @@ export function GanttChart({ tasks, onSelectTask, disabled = false, widths, task
     }
   }, [tasks])
 
+  const chartWidth = days.length * PX_PER_DAY
+  const chartHeight = tasks.length * ROW_HEIGHT
+  const routedDependencies = useMemo(() => routeDependencies({
+    bars: tasks.map((task) => ({ id: task.id, ...barGeometry(positions.get(task.id), zoom), height: BAR_HEIGHT })),
+    links: dependencies,
+    width: chartWidth * zoom,
+    height: chartHeight,
+    rowHeight: ROW_HEIGHT,
+  }), [chartHeight, chartWidth, dependencies, positions, tasks, zoom])
+
   if (!tasks.length) {
     return <section className="chart-card empty-chart" aria-label={t('interactiveChart')}><span className="empty-mark">+</span><strong>{t('noTasks')}</strong><span>{t('noTasksHelp')}</span></section>
   }
-
-  const chartWidth = days.length * PX_PER_DAY
-  const chartHeight = tasks.length * ROW_HEIGHT
   const fitPlan = () => {
     if (scrollRef.current) scrollRef.current.scrollTo({ left: 0, behavior: 'smooth' })
     setZoom(1)
@@ -104,15 +111,7 @@ export function GanttChart({ tasks, onSelectTask, disabled = false, widths, task
            <div className="plot" style={{ width: chartWidth * zoom, height: chartHeight }}>
               <div className="grid-lines">{days.map((day) => { const weekend = [0, 6].includes(new Date(day).getUTCDay()); return <i className={weekend ? 'weekend' : ''} key={day} style={{ left: (day - firstDay) / DAY * PX_PER_DAY * zoom, width: PX_PER_DAY * zoom }} /> })}</div>
               <svg className="connectors" width={chartWidth * zoom} height={chartHeight} aria-label={t('taskDependencies')}>
-                {dependencies.map(({ from, to, key }) => {
-                  const fromBar = barGeometry(from, zoom)
-                  const toBar = barGeometry(to, zoom)
-                 const startX = fromBar.left + fromBar.width
-                 const endX = toBar.left
-                  const startY = fromBar.top + BAR_HEIGHT / 2
-                  const endY = toBar.top + BAR_HEIGHT / 2
-                  const curve = Math.max(CONNECTOR_CURVE, (endX - startX) / 2 + 8)
-                  const path = `M ${startX} ${startY} C ${startX + curve} ${startY}, ${endX - curve} ${endY}, ${endX} ${endY}`
+                 {routedDependencies.map(({ from, to, key, path }) => {
                   return <g className="dependency" key={key} aria-hidden="true">
                     <path className="dependency-target" d={path} style={{ stroke: to.color }} />
                     <path className="dependency-source" d={path} style={{ stroke: from.color }} strokeDasharray="6 6" strokeLinecap="butt" />
