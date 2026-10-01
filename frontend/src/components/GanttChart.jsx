@@ -41,6 +41,7 @@ export function GanttChart({ tasks, onSelectTask, disabled = false, widths, task
       x: ((asDay(task.start_date) - first) / DAY) * PX_PER_DAY,
       width: ((asDay(task.end_date) - asDay(task.start_date)) / DAY + 1) * PX_PER_DAY,
       y: index * ROW_HEIGHT,
+      color: COLORS[index % COLORS.length],
     }]))
     const links = tasks.flatMap((task) => task.predecessors.flatMap((predecessor) => {
       const from = positionsById.get(predecessor)
@@ -101,20 +102,23 @@ export function GanttChart({ tasks, onSelectTask, disabled = false, widths, task
               <div className="date-strip">{days.map((day) => { const date = new Date(day); const weekend = date.getUTCDay() === 0 || date.getUTCDay() === 6; return <div className={`date-cell${weekend ? ' weekend' : ''}`} key={day} style={{ width: PX_PER_DAY * zoom }}><strong>{formatDate(day, { day: 'numeric' })}</strong><span>{formatDate(day, { weekday: 'short' }).slice(0, 2)}</span></div> })}</div>
            </div>
            <div className="plot" style={{ width: chartWidth * zoom, height: chartHeight }}>
-             <div className="grid-lines">{days.map((day) => { const weekend = [0, 6].includes(new Date(day).getUTCDay()); return <i className={weekend ? 'weekend' : ''} key={day} style={{ left: (day - firstDay) / DAY * PX_PER_DAY * zoom, width: PX_PER_DAY * zoom }} /> })}</div>
-             <svg className="connectors" width={chartWidth * zoom} height={chartHeight} aria-label={t('taskDependencies')}>
-               <defs><marker id="arrow" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L6,3 z" fill="#e17b52" /></marker></defs>
-               {dependencies.map(({ from, to, key }) => {
-                 const fromBar = barGeometry(from, zoom)
-                 const toBar = barGeometry(to, zoom)
+              <div className="grid-lines">{days.map((day) => { const weekend = [0, 6].includes(new Date(day).getUTCDay()); return <i className={weekend ? 'weekend' : ''} key={day} style={{ left: (day - firstDay) / DAY * PX_PER_DAY * zoom, width: PX_PER_DAY * zoom }} /> })}</div>
+              <svg className="connectors" width={chartWidth * zoom} height={chartHeight} aria-label={t('taskDependencies')}>
+                {dependencies.map(({ from, to, key }) => {
+                  const fromBar = barGeometry(from, zoom)
+                  const toBar = barGeometry(to, zoom)
                  const startX = fromBar.left + fromBar.width
                  const endX = toBar.left
-                 const startY = fromBar.top + BAR_HEIGHT / 2
-                 const endY = toBar.top + BAR_HEIGHT / 2
-                 const curve = Math.max(CONNECTOR_CURVE, (endX - startX) / 2 + 8)
-                 return <path key={key} d={`M ${startX} ${startY} C ${startX + curve} ${startY}, ${endX - curve} ${endY}, ${endX} ${endY}`} markerEnd="url(#arrow)" />
-               })}
-             </svg>
+                  const startY = fromBar.top + BAR_HEIGHT / 2
+                  const endY = toBar.top + BAR_HEIGHT / 2
+                  const curve = Math.max(CONNECTOR_CURVE, (endX - startX) / 2 + 8)
+                  const path = `M ${startX} ${startY} C ${startX + curve} ${startY}, ${endX - curve} ${endY}, ${endX} ${endY}`
+                  return <g className="dependency" key={key} aria-hidden="true">
+                    <path className="dependency-target" d={path} style={{ stroke: to.color }} />
+                    <path className="dependency-source" d={path} style={{ stroke: from.color }} strokeDasharray="6 6" strokeLinecap="butt" />
+                  </g>
+                })}
+              </svg>
                {tasks.map((task, index) => { const position = positions.get(task.id); const style = { ...barGeometry(position, zoom), '--bar-color': COLORS[index % COLORS.length] }; return onSelectTask ? <button type="button" className="task-bar task-trigger" disabled={disabled} onClick={() => onSelectTask(task.id)} key={task.id} style={style} aria-label={t('editBar', { task: task.task })}><span>{task.task}</span></button> : <div className="task-bar" key={task.id} style={style} title={t('assignedTo', { task: task.task, assignee: task.assignee })}><span>{task.task}</span></div> })}
            </div>
          </div>

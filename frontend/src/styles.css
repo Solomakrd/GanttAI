@@ -94,12 +94,14 @@ button:disabled, input:disabled, textarea:disabled, select:disabled { cursor: no
 .grid-lines i { position: absolute; top: 0; bottom: 0; border-left: 1px solid var(--line-soft); }
 .grid-lines i.weekend { background: rgba(12,32,77,.027); }
 .connectors { position: absolute; z-index: 2; pointer-events: none; overflow: visible; }
-.connectors path { fill: none; stroke: #d85f3d; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.connectors path { fill: none; stroke-width: 2; stroke-linejoin: round; }
+.dependency-target { stroke-linecap: round; }
+.dependency-source { stroke-dasharray: 6 6; stroke-linecap: butt; }
 .task-bar { position: absolute; z-index: 3; height: 24px; display: flex; align-items: center; min-width: 0; padding: 0 8px; overflow: hidden; border: 0; border-radius: 6px; background: var(--bar-color); color: white; box-shadow: 0 3px 8px color-mix(in srgb, var(--bar-color) 28%, transparent); font-size: 10px; font-weight: 750; white-space: nowrap; }
 .task-bar span { overflow: hidden; text-overflow: ellipsis; }
 .chart-footer { min-height: 43px; display: flex; align-items: center; gap: 20px; padding: 9px 18px 9px 24px; border-top: 1px solid var(--line); color: var(--muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
 .chart-footer span { display: inline-flex; align-items: center; gap: 6px; }.chart-footer .date-range { margin-left: auto; }
-.legend-swatch { width: 9px; height: 9px; border-radius: 2px; background: #2376d8; }.legend-line { width: 20px; border-top: 2px solid #d85f3d; }
+.legend-swatch { width: 9px; height: 9px; border-radius: 2px; background: #2376d8; }.legend-line { width: 20px; height: 2px; background: repeating-linear-gradient(90deg, #2376d8 0 4px, #9d77ee 4px 8px); }
 .empty-chart { place-content: center; justify-items: center; gap: 8px; padding: 30px; color: var(--muted); text-align: center; }
 .empty-chart strong { color: var(--navy); }.empty-mark { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 10px; background: #e8edf6; color: var(--navy); font-size: 24px; }
 

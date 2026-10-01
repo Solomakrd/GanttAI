@@ -80,22 +80,29 @@ describe('plan view', () => {
     const dateCell = container.querySelector('.date-cell')
     const secondGridLine = container.querySelectorAll('.grid-lines i')[1]
     const [firstBar, secondBar, thirdBar] = container.querySelectorAll('.task-bar')
-    const [firstDependency, secondDependency] = container.querySelectorAll('.connectors path[marker-end]')
+    const [firstDependency, secondDependency] = container.querySelectorAll('.dependency')
+    const firstDependencyTarget = firstDependency.querySelector('.dependency-target')
+    const firstDependencySource = firstDependency.querySelector('.dependency-source')
     const initialGeometry = {
       dayWidth: parseFloat(dateCell.style.width),
       gridLeft: parseFloat(secondGridLine.style.left),
       firstBarRight: parseFloat(firstBar.style.left) + parseFloat(firstBar.style.width),
       barLeft: parseFloat(secondBar.style.left),
-      dependency: firstDependency.getAttribute('d'),
+      dependency: firstDependencyTarget.getAttribute('d'),
     }
     expect(initialGeometry.gridLeft).toBe(initialGeometry.dayWidth)
     expect(initialGeometry.barLeft).toBe(initialGeometry.dayWidth + 5)
     expect(initialGeometry.dependency).toBe(`M ${initialGeometry.firstBarRight} 24 C ${initialGeometry.firstBarRight + 20} 24, ${initialGeometry.barLeft - 20} 72, ${initialGeometry.barLeft} 72`)
-    expect(container.querySelector('#arrow')).toHaveAttribute('refX', '6')
+    expect(firstDependencySource.getAttribute('d')).toBe(initialGeometry.dependency)
+    expect(firstDependencySource.style.stroke).toBe('rgb(35, 118, 216)')
+    expect(firstDependencyTarget.style.stroke).toBe('rgb(157, 119, 238)')
+    expect(firstDependencySource).toHaveAttribute('stroke-dasharray', '6 6')
+    expect(firstDependencySource).toHaveAttribute('stroke-linecap', 'butt')
+    expect(container.querySelector('marker')).not.toBeInTheDocument()
     const secondBarRight = parseFloat(secondBar.style.left) + parseFloat(secondBar.style.width)
     const thirdBarLeft = parseFloat(thirdBar.style.left)
     const wideCurve = (thirdBarLeft - secondBarRight) / 2 + 8
-    expect(secondDependency.getAttribute('d')).toBe(`M ${secondBarRight} 72 C ${secondBarRight + wideCurve} 72, ${thirdBarLeft - wideCurve} 120, ${thirdBarLeft} 120`)
+    expect(secondDependency.querySelector('.dependency-target').getAttribute('d')).toBe(`M ${secondBarRight} 72 C ${secondBarRight + wideCurve} 72, ${thirdBarLeft - wideCurve} 120, ${thirdBarLeft} 120`)
     expect(secondBarRight + wideCurve).toBeGreaterThan(thirdBarLeft - wideCurve)
     scroll.scrollLeft = 700
     fireEvent.scroll(scroll)
@@ -106,7 +113,7 @@ describe('plan view', () => {
     expect(scroll.scrollLeft).toBe(700)
     expect(parseFloat(dateCell.style.width)).toBe(initialGeometry.dayWidth)
     expect(parseFloat(secondBar.style.left)).toBe(initialGeometry.barLeft)
-    expect(firstDependency.getAttribute('d')).toBe(initialGeometry.dependency)
+    expect(firstDependencyTarget.getAttribute('d')).toBe(initialGeometry.dependency)
     expect(screen.getByRole('button', { name: 'Zoom out' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Zoom out' }))
     const zoomedDayWidth = parseFloat(dateCell.style.width)
@@ -116,7 +123,7 @@ describe('plan view', () => {
     expect(parseFloat(secondBar.style.left)).toBe(zoomedDayWidth + 5)
     const zoomedFirstBarRight = parseFloat(firstBar.style.left) + parseFloat(firstBar.style.width)
     const zoomedSecondBarLeft = parseFloat(secondBar.style.left)
-    expect(firstDependency.getAttribute('d')).toBe(`M ${zoomedFirstBarRight} 24 C ${zoomedFirstBarRight + 20} 24, ${zoomedSecondBarLeft - 20} 72, ${zoomedSecondBarLeft} 72`)
+    expect(firstDependencyTarget.getAttribute('d')).toBe(`M ${zoomedFirstBarRight} 24 C ${zoomedFirstBarRight + 20} 24, ${zoomedSecondBarLeft - 20} 72, ${zoomedSecondBarLeft} 72`)
     expect(parseFloat(container.querySelectorAll('.task-bar')[23].style.top)).toBe(23 * 48 + 12)
     fireEvent.click(screen.getByRole('button', { name: 'Edit Task 24 details' }))
     expect(screen.getByRole('dialog')).toHaveAccessibleName('Edit task')
@@ -258,7 +265,8 @@ describe('plan view', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Import plan' }))
     expect((await screen.findAllByText('Imported root')).length).toBeGreaterThan(0)
     expect(screen.queryByText('First task')).not.toBeInTheDocument()
-    expect(screen.getByLabelText('Task dependencies').querySelectorAll('path[marker-end]')).toHaveLength(1)
+    expect(screen.getByLabelText('Task dependencies').querySelectorAll('.dependency')).toHaveLength(1)
+    expect(screen.getByLabelText('Task dependencies').querySelectorAll('.dependency path')).toHaveLength(2)
     expect(screen.getByText('Imported workspace')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Export Excel' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('Cannot reach the Plan API')
