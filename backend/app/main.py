@@ -7,13 +7,13 @@ from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile, WebS
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .agent import AgentConfigurationError, OpenAIPlanAgent
 from .db import create_schema
 from .excel import ExcelError, MAX_FILE_BYTES, read_workbook, write_workbook
 from .models import Plan, ProjectSnapshot, Task, WorkspaceSnapshot
-from .plan_service import PlanEditError, validate_plan
+from .plan_service import PlanEditError, PlanEditor, validate_plan
 from .repositories import AccessDenied, ProjectRepository, VersionConflict
 
 
@@ -140,6 +140,16 @@ class UndoRequest(BaseModel):
     expected_version: int
 
 
+class TaskUpdateRequest(BaseModel):
+    expected_version: int
+    task: str = Field(min_length=1, max_length=32767)
+    description: str = Field(max_length=32767)
+    assignee: str = Field(min_length=1, max_length=32767)
+    duration: int = Field(ge=1, le=730)
+    start_date: date
+    predecessors: list[str] = Field(default_factory=list, max_length=500)
+
+
 @app.get("/api/plan", response_model=Plan)
 def get_plan() -> Plan:
     return Plan(tasks=seeded_tasks())
@@ -228,6 +238,29 @@ def undo_project(project_id: str, body: UndoRequest, x_workspace_token: Optional
     except AccessDenied as error:
         raise HTTPException(status_code=404, detail="Project not found.") from error
     except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.patch("/api/projects/{project_id}/tasks/{task_id:path}", response_model=ProjectSnapshot)
+def update_project_task(project_id: str, task_id: str, body: TaskUpdateRequest,
+                        x_workspace_token: Optional[str] = Header(None)) -> ProjectSnapshot:
+    token = workspace_token(x_workspace_token)
+    try:
+        snapshot = repository().load(project_id, token)
+        if snapshot.version != body.expected_version:
+            raise VersionConflict()
+        candidate = PlanEditor(snapshot.plan).edit_task(
+            task_id, body.task, body.description, body.assignee, body.duration,
+            body.start_date.isoformat(), body.predecessors,
+        )
+        version = repository().commit_plan(project_id, token, body.expected_version, candidate, "task")
+        return ProjectSnapshot(project_id=snapshot.project_id, conversation_id=snapshot.conversation_id,
+                               version=version, plan=candidate, messages=snapshot.messages)
+    except VersionConflict as error:
+        raise HTTPException(status_code=409, detail="The plan changed while the task was being saved. Reload and retry.") from error
+    except AccessDenied as error:
+        raise HTTPException(status_code=404, detail="Project not found.") from error
+    except PlanEditError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
 
 

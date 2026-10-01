@@ -13,7 +13,7 @@ function formatDay(day) {
   return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(new Date(day))
 }
 
-export function GanttChart({ tasks }) {
+export function GanttChart({ tasks, onSelectTask, disabled = false }) {
   const scrollRef = useRef(null)
   const [zoom, setZoom] = useState(1)
   const { firstDay, lastDay, days, positions, dependencies } = useMemo(() => {
@@ -71,8 +71,8 @@ export function GanttChart({ tasks }) {
         </div>
         <div className="timeline-body">
           <div className="task-list">
-            {tasks.map((task, index) => <div className="task-row" key={task.id} style={{ height: ROW_HEIGHT }}>
-              <div className="task-name"><strong>{task.task}</strong><span>{task.assignee} · {task.duration}d</span></div>
+             {tasks.map((task, index) => <div className="task-row" key={task.id} style={{ height: ROW_HEIGHT }}>
+               {onSelectTask ? <button type="button" className="task-name task-trigger" disabled={disabled} onClick={() => onSelectTask(task.id)} aria-label={`Edit ${task.task} details`}><strong>{task.task}</strong><span>{task.assignee} · {task.duration}d</span></button> : <div className="task-name"><strong>{task.task}</strong><span>{task.assignee} · {task.duration}d</span></div>}
               <div className="row-background" />
             </div>)}
           </div>
@@ -89,7 +89,7 @@ export function GanttChart({ tasks }) {
                 return <path key={key} d={`M ${startX} ${startY} H ${bend} V ${endY} H ${endX - 4}`} markerEnd="url(#arrow)" />
               })}
             </svg>
-            {tasks.map((task) => { const position = positions.get(task.id); return <div className="task-bar" key={task.id} style={{ left: position.x * zoom, top: position.y + 18, width: position.width * zoom - 8 }} title={`${task.task}, assigned to ${task.assignee}`}><span>{task.task}</span></div> })}
+             {tasks.map((task) => { const position = positions.get(task.id); return onSelectTask ? <button type="button" className="task-bar task-trigger" disabled={disabled} onClick={() => onSelectTask(task.id)} key={task.id} style={{ left: position.x * zoom, top: position.y + 18, width: position.width * zoom - 8 }} aria-label={`Edit ${task.task} timeline bar`}><span>{task.task}</span></button> : <div className="task-bar" key={task.id} style={{ left: position.x * zoom, top: position.y + 18, width: position.width * zoom - 8 }} title={`${task.task}, assigned to ${task.assignee}`}><span>{task.task}</span></div> })}
           </div>
         </div>
       </div>

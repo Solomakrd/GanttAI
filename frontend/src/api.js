@@ -145,6 +145,16 @@ export async function undoProject(project, signal) {
   return snapshot(await response.json())
 }
 
+export async function updateProjectTask(project, taskId, values, signal) {
+  const response = await request(`/api/projects/${project.projectId}/tasks/${encodeURIComponent(taskId)}`, {
+    method: 'PATCH', signal, headers: { 'Content-Type': 'application/json', 'X-Workspace-Token': project.token },
+    body: JSON.stringify({ expected_version: project.version, ...values }),
+  })
+  const result = snapshot(await response.json())
+  result.token = project.token
+  return result
+}
+
 export async function importPlan(file, startDate, signal) {
   const body = new FormData()
   body.append('file', file)

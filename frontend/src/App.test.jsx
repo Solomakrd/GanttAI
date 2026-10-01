@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import App from './App'
 
 const plan = { tasks: [{ id: 'one', task: 'First task', description: '', assignee: 'Maya', duration: 2, start_date: '2026-10-05', end_date: '2026-10-06', predecessors: [] }, { id: 'two', task: 'Second task', description: '', assignee: 'Leo', duration: 1, start_date: '2026-10-07', end_date: '2026-10-07', predecessors: ['one'] }] }
@@ -195,5 +196,69 @@ describe('plan view', () => {
 
     finishImport({ ok: true, json: async () => ({ ...project, version: 2 }) })
     await waitFor(() => expect(screen.getByRole('button', { name: 'New project' })).toBeEnabled())
+  })
+
+  it('opens from labels and bars, saves one complete edit, and restores focus', async () => {
+    const user = userEvent.setup()
+    class Socket { constructor() { this.listeners = {} } addEventListener(name, callback) { this.listeners[name] = callback } send() {} close() {} }
+    vi.stubGlobal('WebSocket', Socket)
+    const project = { project_id: 'p1', conversation_id: 'c1', workspace_token: 'token', version: 1, plan, messages: [] }
+    const changed = { ...plan.tasks[1], task: 'Updated task', description: 'More detail', assignee: 'Priya' }
+    const fetch = vi.spyOn(global, 'fetch')
+      .mockResolvedValueOnce({ ok: true, json: async () => project })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ ...project, version: 2, plan: { tasks: [plan.tasks[0], changed] } }) })
+    render(<App />)
+    const label = await screen.findByRole('button', { name: 'Edit Second task details' })
+    label.focus()
+    await user.keyboard('{Enter}')
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(screen.getByLabelText('First task')).toBeChecked()
+    fireEvent.change(screen.getByLabelText('Task name'), { target: { value: 'Updated task' } })
+    fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'More detail' } })
+    fireEvent.change(screen.getByLabelText('Assignee'), { target: { value: 'Priya' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+    expect((await screen.findAllByText('Updated task')).length).toBeGreaterThan(0)
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(fetch.mock.calls[1][0]).toContain('/api/projects/p1/tasks/two')
+    expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual(expect.objectContaining({ expected_version: 1, predecessors: ['one'] }))
+    expect(document.activeElement).toHaveAccessibleName('Edit Updated task details')
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Updated task timeline bar' }))
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+  })
+
+  it('keeps the chart and modal input after a version conflict', async () => {
+    class Socket { constructor() { this.listeners = {} } addEventListener(name, callback) { this.listeners[name] = callback } send() {} close() {} }
+    vi.stubGlobal('WebSocket', Socket)
+    const project = { project_id: 'p1', conversation_id: 'c1', workspace_token: 'token', version: 1, plan, messages: [] }
+    vi.spyOn(global, 'fetch')
+      .mockResolvedValueOnce({ ok: true, json: async () => project })
+      .mockResolvedValueOnce({ ok: false, status: 409, json: async () => ({ detail: 'The plan changed while the task was being saved.' }) })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit First task details' }))
+    fireEvent.change(screen.getByLabelText('Task name'), { target: { value: 'Unsaved name' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('plan changed')
+    expect(screen.getByLabelText('Task name')).toHaveValue('Unsaved name')
+    expect(screen.getAllByText('First task').length).toBeGreaterThan(0)
+  })
+
+  it('closes a stale selection when chat replaces the plan', async () => {
+    class Socket {
+      static instance
+      constructor() { this.listeners = {}; Socket.instance = this }
+      addEventListener(name, callback) { this.listeners[name] = callback }
+      send() {}
+      close() {}
+      emit(payload) { this.listeners.message({ data: JSON.stringify(payload) }) }
+    }
+    vi.stubGlobal('WebSocket', Socket)
+    const project = { project_id: 'p1', conversation_id: 'c1', workspace_token: 'token', version: 1, plan, messages: [] }
+    vi.spyOn(global, 'fetch').mockResolvedValue({ ok: true, json: async () => project })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit First task details' }))
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    act(() => Socket.instance.emit({ type: 'complete', version: 2, plan: { tasks: [{ ...plan.tasks[1], predecessors: [] }] }, message: 'Removed first task.' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: 'Edit First task details' })).not.toBeInTheDocument()
   })
 })

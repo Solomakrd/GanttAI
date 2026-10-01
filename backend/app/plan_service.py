@@ -66,7 +66,10 @@ class PlanEditor:
                         task["start_date"] = latest + timedelta(days=1)
                     elif root_start is not None:
                         task["start_date"] = root_start
-                task["end_date"] = task["start_date"] + timedelta(days=task["duration"] - 1)
+                try:
+                    task["end_date"] = task["start_date"] + timedelta(days=task["duration"] - 1)
+                except OverflowError as error:
+                    raise PlanEditError(f"Task {task['task']!r} ends outside the supported date range.") from error
                 pending.remove(key)
                 progress = True
             if not progress:
@@ -127,6 +130,38 @@ class PlanEditor:
         schedule_changed = duration is not None or start_date is not None
         return self._commit(tasks, [target["id"]] if schedule_changed else [],
                             fixed_starts=[target["id"]] if start_date is not None else [])
+
+    def edit_task(self, task_id, task, description, assignee, duration, start_date, predecessors):
+        tasks = self._tasks()
+        by_id = {item["id"]: item for item in tasks}
+        target = by_id.get(task_id)
+        if not target:
+            raise PlanEditError(f"Unknown task ID {task_id!r}.")
+        name = task.strip()
+        owner = assignee.strip()
+        if not name:
+            raise PlanEditError("Task name is required.")
+        if not owner:
+            raise PlanEditError("Assignee is required.")
+        if any(item["id"] != task_id and item["task"] == name for item in tasks):
+            raise PlanEditError(f"Task name {name!r} already exists.")
+        if len(predecessors) != len(set(predecessors)):
+            raise PlanEditError("A predecessor can be selected only once.")
+        unknown = [key for key in predecessors if key not in by_id]
+        if unknown:
+            raise PlanEditError(f"Unknown predecessor ID {unknown[0]!r}.")
+        if task_id in predecessors:
+            raise PlanEditError("A task cannot be its own predecessor.")
+        try:
+            start = date.fromisoformat(start_date)
+        except ValueError as error:
+            raise PlanEditError("start_date must use YYYY-MM-DD.") from error
+        schedule_changed = (duration != target["duration"] or start != target["start_date"] or
+                            list(predecessors) != target["predecessors"])
+        target.update(task=name, description=description, assignee=owner, duration=duration,
+                      start_date=start, predecessors=list(predecessors))
+        return self._commit(tasks, [task_id] if schedule_changed else [],
+                            fixed_starts=[task_id] if schedule_changed else [])
 
     def dependencies(self, task, predecessors):
         tasks = self._tasks()

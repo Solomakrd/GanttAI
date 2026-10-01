@@ -2,6 +2,8 @@
 
 React Gantt timeline backed by FastAPI and PostgreSQL. The initial project contains a deterministic five-task seed. Import/export Excel or use the adjacent OpenRouter/MCP chat to apply validated bulk edits as immutable plan versions.
 
+Select a task name or timeline bar in a persisted project to inspect and edit its name, description, assignee, duration, start date, and predecessors. The end date is derived. Saving validates and reschedules the complete change on the server as one immutable version; cancelling or a failed/stale save leaves the chart unchanged.
+
 ## Run locally
 
 Python 3.10+, a current Node.js LTS release, Docker, and an OpenRouter API key are required for the complete application.
@@ -85,6 +87,7 @@ Endpoints:
 - `GET /api/workspace`: lists the token's projects and restores its latest project, plan version and messages.
 - `POST /api/projects/{id}/import`: version-checked persisted Excel import.
 - `POST /api/projects/{id}/undo`: writes the prior content as a new immutable version.
+- `PATCH /api/projects/{id}/tasks/{task_id}`: validates and atomically saves a version-checked task edit.
 - `WS /api/projects/{id}/chat`: version-checked chat, safe status events and atomic plan replacement.
 
 Workbook errors use `detail: {message, sheet, row, column}` where location is available, with HTTP 422 for invalid workbooks or 413 for file/expanded-size limits. FastAPI request-schema errors use its standard `detail` array; the UI handles both.
