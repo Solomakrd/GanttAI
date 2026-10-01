@@ -78,17 +78,20 @@ describe('plan view', () => {
     const scroll = container.querySelector('.timeline-scroll')
     const dateCell = container.querySelector('.date-cell')
     const secondGridLine = container.querySelectorAll('.grid-lines i')[1]
-    const secondBar = container.querySelectorAll('.task-bar')[1]
+    const [firstBar, secondBar] = container.querySelectorAll('.task-bar')
     const firstDependency = container.querySelector('.connectors path[marker-end]')
     const initialGeometry = {
       dayWidth: parseFloat(dateCell.style.width),
       gridLeft: parseFloat(secondGridLine.style.left),
+      firstBarRight: parseFloat(firstBar.style.left) + parseFloat(firstBar.style.width),
       barLeft: parseFloat(secondBar.style.left),
       dependency: firstDependency.getAttribute('d'),
     }
     expect(initialGeometry.gridLeft).toBe(initialGeometry.dayWidth)
     expect(initialGeometry.barLeft).toBe(initialGeometry.dayWidth + 5)
-    expect(initialGeometry.dependency).toContain(`M ${initialGeometry.dayWidth} 24`)
+    expect(initialGeometry.dependency).toContain(`M ${initialGeometry.firstBarRight} 24`)
+    expect(initialGeometry.dependency).toMatch(new RegExp(`H ${initialGeometry.barLeft}$`))
+    expect(container.querySelector('#arrow')).toHaveAttribute('refX', '6')
     scroll.scrollLeft = 700
     fireEvent.scroll(scroll)
     const originalWidth = parseInt(container.querySelector('.timeline').style.minWidth, 10)
@@ -106,7 +109,9 @@ describe('plan view', () => {
     expect(zoomedDayWidth).toBe(39)
     expect(parseFloat(secondGridLine.style.left)).toBe(zoomedDayWidth)
     expect(parseFloat(secondBar.style.left)).toBe(zoomedDayWidth + 5)
-    expect(firstDependency.getAttribute('d')).toContain(`M ${zoomedDayWidth} 24`)
+    const zoomedFirstBarRight = parseFloat(firstBar.style.left) + parseFloat(firstBar.style.width)
+    expect(firstDependency.getAttribute('d')).toContain(`M ${zoomedFirstBarRight} 24`)
+    expect(firstDependency.getAttribute('d')).toMatch(new RegExp(`H ${parseFloat(secondBar.style.left)}$`))
     expect(parseFloat(container.querySelectorAll('.task-bar')[23].style.top)).toBe(23 * 48 + 12)
     fireEvent.click(screen.getByRole('button', { name: 'Edit Task 24 details' }))
     expect(screen.getByRole('dialog')).toHaveAccessibleName('Edit task')

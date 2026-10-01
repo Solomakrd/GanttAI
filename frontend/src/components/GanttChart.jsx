@@ -5,6 +5,10 @@ import { useI18n } from '../i18n'
 const DAY = 24 * 60 * 60 * 1000
 const PX_PER_DAY = 52
 const ROW_HEIGHT = 48
+const BAR_X_INSET = 5
+const BAR_TOP = 12
+const BAR_HEIGHT = 24
+const BAR_MIN_WIDTH = 24
 const COLORS = ['#2376d8', '#9d77ee', '#29a96b', '#e17b52', '#0c204d']
 
 function asDay(value) {
@@ -13,6 +17,14 @@ function asDay(value) {
 
 function initials(name) {
   return name.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase() || '—'
+}
+
+function barGeometry(position, zoom) {
+  return {
+    left: position.x * zoom + BAR_X_INSET,
+    top: position.y + BAR_TOP,
+    width: Math.max(BAR_MIN_WIDTH, position.width * zoom - BAR_X_INSET * 2),
+  }
 }
 
 export function GanttChart({ tasks, onSelectTask, disabled = false, widths, taskTableMax, mobile = false, onWidthChange, onWidthReset }) {
@@ -90,17 +102,19 @@ export function GanttChart({ tasks, onSelectTask, disabled = false, widths, task
            <div className="plot" style={{ width: chartWidth * zoom, height: chartHeight }}>
              <div className="grid-lines">{days.map((day) => { const weekend = [0, 6].includes(new Date(day).getUTCDay()); return <i className={weekend ? 'weekend' : ''} key={day} style={{ left: (day - firstDay) / DAY * PX_PER_DAY * zoom, width: PX_PER_DAY * zoom }} /> })}</div>
              <svg className="connectors" width={chartWidth * zoom} height={chartHeight} aria-label={t('taskDependencies')}>
-              <defs><marker id="arrow" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto"><path d="M0,0 L0,6 L6,3 z" fill="#e17b52" /></marker></defs>
-              {dependencies.map(({ from, to, key }) => {
-                const startX = (from.x + from.width) * zoom
-                const endX = to.x * zoom
-                const startY = from.y + ROW_HEIGHT / 2
-                const endY = to.y + ROW_HEIGHT / 2
-                const bend = Math.max(startX + 16, endX - 14)
-                return <path key={key} d={`M ${startX} ${startY} H ${bend} V ${endY} H ${endX - 4}`} markerEnd="url(#arrow)" />
-              })}
-            </svg>
-              {tasks.map((task, index) => { const position = positions.get(task.id); const style = { left: position.x * zoom + 5, top: position.y + 12, width: Math.max(24, position.width * zoom - 10), '--bar-color': COLORS[index % COLORS.length] }; return onSelectTask ? <button type="button" className="task-bar task-trigger" disabled={disabled} onClick={() => onSelectTask(task.id)} key={task.id} style={style} aria-label={t('editBar', { task: task.task })}><span>{task.task}</span></button> : <div className="task-bar" key={task.id} style={style} title={t('assignedTo', { task: task.task, assignee: task.assignee })}><span>{task.task}</span></div> })}
+               <defs><marker id="arrow" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto"><path d="M0,0 L0,6 L6,3 z" fill="#e17b52" /></marker></defs>
+               {dependencies.map(({ from, to, key }) => {
+                 const fromBar = barGeometry(from, zoom)
+                 const toBar = barGeometry(to, zoom)
+                 const startX = fromBar.left + fromBar.width
+                 const endX = toBar.left
+                 const startY = fromBar.top + BAR_HEIGHT / 2
+                 const endY = toBar.top + BAR_HEIGHT / 2
+                 const bend = Math.max(startX + 16, endX - 14)
+                 return <path key={key} d={`M ${startX} ${startY} H ${bend} V ${endY} H ${endX}`} markerEnd="url(#arrow)" />
+               })}
+             </svg>
+               {tasks.map((task, index) => { const position = positions.get(task.id); const style = { ...barGeometry(position, zoom), '--bar-color': COLORS[index % COLORS.length] }; return onSelectTask ? <button type="button" className="task-bar task-trigger" disabled={disabled} onClick={() => onSelectTask(task.id)} key={task.id} style={style} aria-label={t('editBar', { task: task.task })}><span>{task.task}</span></button> : <div className="task-bar" key={task.id} style={style} title={t('assignedTo', { task: task.task, assignee: task.assignee })}><span>{task.task}</span></div> })}
            </div>
          </div>
       </div>
