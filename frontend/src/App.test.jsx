@@ -65,8 +65,9 @@ describe('plan view', () => {
 
   it('keeps a broad, many-task plan aligned and editable', async () => {
     const tasks = Array.from({ length: 24 }, (_, index) => {
-      const start = new Date(Date.UTC(2026, 0, 1 + index))
-      const end = new Date(Date.UTC(2026, 0, 1 + index))
+      const dayOffset = index + (index >= 2 ? 3 : 0)
+      const start = new Date(Date.UTC(2026, 0, 1 + dayOffset))
+      const end = new Date(Date.UTC(2026, 0, 1 + dayOffset))
       return { id: `task-${index}`, task: `Task ${index + 1}`, description: '', assignee: `Owner ${index + 1}`, duration: 1, start_date: start.toISOString().slice(0, 10), end_date: end.toISOString().slice(0, 10), predecessors: index ? [`task-${index - 1}`] : [] }
     })
     vi.spyOn(global, 'fetch').mockResolvedValue({ ok: true, json: async () => ({ project_id: 'wide-plan', conversation_id: 'c1', workspace_token: 'token', version: 1, plan: { tasks }, messages: [] }) })
@@ -78,8 +79,8 @@ describe('plan view', () => {
     const scroll = container.querySelector('.timeline-scroll')
     const dateCell = container.querySelector('.date-cell')
     const secondGridLine = container.querySelectorAll('.grid-lines i')[1]
-    const [firstBar, secondBar] = container.querySelectorAll('.task-bar')
-    const firstDependency = container.querySelector('.connectors path[marker-end]')
+    const [firstBar, secondBar, thirdBar] = container.querySelectorAll('.task-bar')
+    const [firstDependency, secondDependency] = container.querySelectorAll('.connectors path[marker-end]')
     const initialGeometry = {
       dayWidth: parseFloat(dateCell.style.width),
       gridLeft: parseFloat(secondGridLine.style.left),
@@ -89,9 +90,13 @@ describe('plan view', () => {
     }
     expect(initialGeometry.gridLeft).toBe(initialGeometry.dayWidth)
     expect(initialGeometry.barLeft).toBe(initialGeometry.dayWidth + 5)
-    expect(initialGeometry.dependency).toContain(`M ${initialGeometry.firstBarRight} 24`)
-    expect(initialGeometry.dependency).toMatch(new RegExp(`H ${initialGeometry.barLeft}$`))
+    expect(initialGeometry.dependency).toBe(`M ${initialGeometry.firstBarRight} 24 C ${initialGeometry.firstBarRight + 20} 24, ${initialGeometry.barLeft - 20} 72, ${initialGeometry.barLeft} 72`)
     expect(container.querySelector('#arrow')).toHaveAttribute('refX', '6')
+    const secondBarRight = parseFloat(secondBar.style.left) + parseFloat(secondBar.style.width)
+    const thirdBarLeft = parseFloat(thirdBar.style.left)
+    const wideCurve = (thirdBarLeft - secondBarRight) / 2 + 8
+    expect(secondDependency.getAttribute('d')).toBe(`M ${secondBarRight} 72 C ${secondBarRight + wideCurve} 72, ${thirdBarLeft - wideCurve} 120, ${thirdBarLeft} 120`)
+    expect(secondBarRight + wideCurve).toBeGreaterThan(thirdBarLeft - wideCurve)
     scroll.scrollLeft = 700
     fireEvent.scroll(scroll)
     const originalWidth = parseInt(container.querySelector('.timeline').style.minWidth, 10)
@@ -110,8 +115,8 @@ describe('plan view', () => {
     expect(parseFloat(secondGridLine.style.left)).toBe(zoomedDayWidth)
     expect(parseFloat(secondBar.style.left)).toBe(zoomedDayWidth + 5)
     const zoomedFirstBarRight = parseFloat(firstBar.style.left) + parseFloat(firstBar.style.width)
-    expect(firstDependency.getAttribute('d')).toContain(`M ${zoomedFirstBarRight} 24`)
-    expect(firstDependency.getAttribute('d')).toMatch(new RegExp(`H ${parseFloat(secondBar.style.left)}$`))
+    const zoomedSecondBarLeft = parseFloat(secondBar.style.left)
+    expect(firstDependency.getAttribute('d')).toBe(`M ${zoomedFirstBarRight} 24 C ${zoomedFirstBarRight + 20} 24, ${zoomedSecondBarLeft - 20} 72, ${zoomedSecondBarLeft} 72`)
     expect(parseFloat(container.querySelectorAll('.task-bar')[23].style.top)).toBe(23 * 48 + 12)
     fireEvent.click(screen.getByRole('button', { name: 'Edit Task 24 details' }))
     expect(screen.getByRole('dialog')).toHaveAccessibleName('Edit task')

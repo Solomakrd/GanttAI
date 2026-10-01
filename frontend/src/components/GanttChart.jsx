@@ -9,6 +9,7 @@ const BAR_X_INSET = 5
 const BAR_TOP = 12
 const BAR_HEIGHT = 24
 const BAR_MIN_WIDTH = 24
+const CONNECTOR_CURVE = 20
 const COLORS = ['#2376d8', '#9d77ee', '#29a96b', '#e17b52', '#0c204d']
 
 function asDay(value) {
@@ -110,8 +111,8 @@ export function GanttChart({ tasks, onSelectTask, disabled = false, widths, task
                  const endX = toBar.left
                  const startY = fromBar.top + BAR_HEIGHT / 2
                  const endY = toBar.top + BAR_HEIGHT / 2
-                 const bend = Math.max(startX + 16, endX - 14)
-                 return <path key={key} d={`M ${startX} ${startY} H ${bend} V ${endY} H ${endX}`} markerEnd="url(#arrow)" />
+                 const curve = Math.max(CONNECTOR_CURVE, (endX - startX) / 2 + 8)
+                 return <path key={key} d={`M ${startX} ${startY} C ${startX + curve} ${startY}, ${endX - curve} ${endY}, ${endX} ${endY}`} markerEnd="url(#arrow)" />
                })}
              </svg>
                {tasks.map((task, index) => { const position = positions.get(task.id); const style = { ...barGeometry(position, zoom), '--bar-color': COLORS[index % COLORS.length] }; return onSelectTask ? <button type="button" className="task-bar task-trigger" disabled={disabled} onClick={() => onSelectTask(task.id)} key={task.id} style={style} aria-label={t('editBar', { task: task.task })}><span>{task.task}</span></button> : <div className="task-bar" key={task.id} style={style} title={t('assignedTo', { task: task.task, assignee: task.assignee })}><span>{task.task}</span></div> })}
