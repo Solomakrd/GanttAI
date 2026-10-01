@@ -1,9 +1,9 @@
 import { useMemo, useRef, useState } from 'react'
+import { ResizeHandle } from './ResizeHandle'
 
 const DAY = 24 * 60 * 60 * 1000
 const PX_PER_DAY = 52
 const ROW_HEIGHT = 48
-const LABEL_WIDTH = 340
 const COLORS = ['#2376d8', '#9d77ee', '#29a96b', '#e17b52', '#0c204d']
 
 function asDay(value) {
@@ -26,7 +26,7 @@ function initials(name) {
   return name.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase() || '—'
 }
 
-export function GanttChart({ tasks, onSelectTask, disabled = false }) {
+export function GanttChart({ tasks, onSelectTask, disabled = false, widths, taskTableMax, mobile = false, onWidthChange, onWidthReset }) {
   const scrollRef = useRef(null)
   const [zoom, setZoom] = useState(1)
   const { firstDay, lastDay, days, positions, dependencies } = useMemo(() => {
@@ -83,13 +83,15 @@ export function GanttChart({ tasks, onSelectTask, disabled = false }) {
       </div>
     </div>
      <div className="timeline-scroll" ref={scrollRef}>
-       <div className="timeline" style={{ minWidth: `${LABEL_WIDTH + chartWidth * zoom}px` }}>
-         <div className="task-table">
-           <div className="task-heading"><span>Task</span><span>Owner / length</span></div>
+       <div className="timeline" style={{ minWidth: `${widths.taskTable + chartWidth * zoom}px`, '--task-column': `${widths.taskTable}px`, '--task-name-column': `${widths.taskName}px` }}>
+          <div className="task-table">
+            <div className="task-heading"><span>Task</span><span>Owner / length</span></div>
            {tasks.map((task, index) => <div className="task-row" key={task.id} style={{ height: ROW_HEIGHT, '--task-color': COLORS[index % COLORS.length] }}>
              {onSelectTask ? <button type="button" className="task-name task-trigger" disabled={disabled} onClick={() => onSelectTask(task.id)} aria-label={`Edit ${task.task} details`}><i /><strong>{task.task}</strong><span className="task-meta"><b>{initials(task.assignee)}</b>{task.duration}d</span></button> : <div className="task-name"><i /><strong>{task.task}</strong><span className="task-meta"><b>{initials(task.assignee)}</b>{task.duration}d</span></div>}
-           </div>)}
-         </div>
+            </div>)}
+            {!mobile && <ResizeHandle className="task-owner-resize" label="Task and owner boundary" value={widths.taskName} min={140} max={Math.min(500, widths.taskTable - 100)} onChange={(value) => onWidthChange('taskName', value)} onReset={() => onWidthReset('taskName')} />}
+             {!mobile && <ResizeHandle className="task-timeline-resize" label="Task table and timeline boundary" value={widths.taskTable} min={260} max={taskTableMax} onChange={(value) => onWidthChange('taskTable', value)} onReset={() => onWidthReset('taskTable')} />}
+          </div>
          <div className="timeline-pane" style={{ width: chartWidth * zoom }}>
            <div className="timeline-header">
              <div className="month-strip">{monthSegments.map((segment) => <span key={segment.label} style={{ width: segment.count * PX_PER_DAY * zoom }}>{segment.label}</span>)}</div>

@@ -57,7 +57,7 @@ describe('plan view', () => {
     const tasks = Array.from({ length: 24 }, (_, index) => {
       const start = new Date(Date.UTC(2026, 0, 1 + index))
       const end = new Date(Date.UTC(2026, 0, 1 + index))
-      return { id: `task-${index}`, task: `Task ${index + 1}`, description: '', assignee: `Owner ${index + 1}`, duration: 1, start_date: start.toISOString().slice(0, 10), end_date: end.toISOString().slice(0, 10), predecessors: [] }
+      return { id: `task-${index}`, task: `Task ${index + 1}`, description: '', assignee: `Owner ${index + 1}`, duration: 1, start_date: start.toISOString().slice(0, 10), end_date: end.toISOString().slice(0, 10), predecessors: index ? [`task-${index - 1}`] : [] }
     })
     vi.spyOn(global, 'fetch').mockResolvedValue({ ok: true, json: async () => ({ project_id: 'wide-plan', conversation_id: 'c1', workspace_token: 'token', version: 1, plan: { tasks }, messages: [] }) })
     const { container } = render(<App />)
@@ -65,13 +65,126 @@ describe('plan view', () => {
     expect(container.querySelectorAll('.task-table .task-row')).toHaveLength(24)
     expect(container.querySelectorAll('.plot .task-bar')).toHaveLength(24)
     expect(container.querySelector('.task-table')).toBeInTheDocument()
-    expect(parseInt(container.querySelector('.timeline').style.minWidth, 10)).toBeGreaterThan(1500)
+    const scroll = container.querySelector('.timeline-scroll')
+    const dateCell = container.querySelector('.date-cell')
+    const secondGridLine = container.querySelectorAll('.grid-lines i')[1]
+    const secondBar = container.querySelectorAll('.task-bar')[1]
+    const firstDependency = container.querySelector('.connectors path[marker-end]')
+    const initialGeometry = {
+      dayWidth: parseFloat(dateCell.style.width),
+      gridLeft: parseFloat(secondGridLine.style.left),
+      barLeft: parseFloat(secondBar.style.left),
+      dependency: firstDependency.getAttribute('d'),
+    }
+    expect(initialGeometry.gridLeft).toBe(initialGeometry.dayWidth)
+    expect(initialGeometry.barLeft).toBe(initialGeometry.dayWidth + 5)
+    expect(initialGeometry.dependency).toContain(`M ${initialGeometry.dayWidth} 24`)
+    scroll.scrollLeft = 700
+    fireEvent.scroll(scroll)
+    const originalWidth = parseInt(container.querySelector('.timeline').style.minWidth, 10)
+    expect(originalWidth).toBeGreaterThan(1500)
+    fireEvent.keyDown(screen.getByRole('separator', { name: 'Task table and timeline boundary' }), { key: 'ArrowRight', shiftKey: true })
+    expect(parseInt(container.querySelector('.timeline').style.minWidth, 10)).toBe(originalWidth + 24)
+    expect(scroll.scrollLeft).toBe(700)
+    expect(parseFloat(dateCell.style.width)).toBe(initialGeometry.dayWidth)
+    expect(parseFloat(secondBar.style.left)).toBe(initialGeometry.barLeft)
+    expect(firstDependency.getAttribute('d')).toBe(initialGeometry.dependency)
     expect(screen.getByRole('button', { name: 'Zoom out' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom out' }))
+    const zoomedDayWidth = parseFloat(dateCell.style.width)
+    expect(scroll.scrollLeft).toBe(700)
+    expect(zoomedDayWidth).toBe(39)
+    expect(parseFloat(secondGridLine.style.left)).toBe(zoomedDayWidth)
+    expect(parseFloat(secondBar.style.left)).toBe(zoomedDayWidth + 5)
+    expect(firstDependency.getAttribute('d')).toContain(`M ${zoomedDayWidth} 24`)
+    expect(parseFloat(container.querySelectorAll('.task-bar')[23].style.top)).toBe(23 * 48 + 12)
     fireEvent.click(screen.getByRole('button', { name: 'Edit Task 24 details' }))
     expect(screen.getByRole('dialog')).toHaveAccessibleName('Edit task')
   })
 
+  it('resizes all desktop boundaries with pointer and keyboard controls', async () => {
+    vi.spyOn(global, 'fetch').mockResolvedValue({ ok: true, json: async () => plan })
+    const { container } = render(<App />)
+    await screen.findAllByText('First task')
+    const workspace = screen.getByRole('separator', { name: 'Plan and AI assistant boundary' })
+    const table = screen.getByRole('separator', { name: 'Task table and timeline boundary' })
+    const owner = screen.getByRole('separator', { name: 'Task and owner boundary' })
+
+    fireEvent.keyDown(table, { key: 'ArrowRight', shiftKey: true })
+    expect(table).toHaveAttribute('aria-valuenow', '334')
+    expect(container.querySelector('.timeline').style.getPropertyValue('--task-column')).toBe('334px')
+    fireEvent.pointerDown(owner, { button: 0, clientX: 200 })
+    fireEvent.pointerMove(window, { clientX: 240 })
+    fireEvent.pointerUp(window)
+    expect(owner).toHaveAttribute('aria-valuenow', '234')
+    owner.focus()
+    fireEvent.keyDown(owner, { key: ' ' })
+    expect(owner).toHaveAttribute('aria-valuenow', '200')
+    fireEvent.keyDown(workspace, { key: 'ArrowRight' })
+    expect(workspace).toHaveAttribute('aria-valuenow', '332')
+    expect(document.body).not.toHaveClass('is-resizing')
+  })
+
+  it('clamps, resets, and restores versioned column preferences', async () => {
+    localStorage.setItem('ganttai.columnWidths.v1', JSON.stringify({ version: 1, widths: { assistant: 999, taskTable: 420, taskName: 999 } }))
+    vi.spyOn(global, 'fetch').mockResolvedValue({ ok: true, json: async () => plan })
+    const { unmount } = render(<App />)
+    await screen.findAllByText('First task')
+    const table = screen.getByRole('separator', { name: 'Task table and timeline boundary' })
+    const owner = screen.getByRole('separator', { name: 'Task and owner boundary' })
+    expect(table).toHaveAttribute('aria-valuenow', '300')
+    expect(table).toHaveAttribute('aria-valuemax', '300')
+    expect(owner).toHaveAttribute('aria-valuenow', '200')
+    fireEvent.keyDown(table, { key: 'End' })
+    expect(table).toHaveAttribute('aria-valuenow', '300')
+    table.focus()
+    fireEvent.keyDown(table, { key: 'Enter' })
+    expect(table).toHaveAttribute('aria-valuenow', '300')
+    unmount()
+    render(<App />)
+    await screen.findAllByText('First task')
+    expect(screen.getByRole('separator', { name: 'Task table and timeline boundary' })).toHaveAttribute('aria-valuenow', '300')
+  })
+
+  it('reserves timeline space at the desktop breakpoint', async () => {
+    const desktopWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 821 })
+    localStorage.setItem('ganttai.columnWidths.v1', JSON.stringify({ version: 1, widths: { assistant: 600, taskTable: 600, taskName: 500 } }))
+    vi.spyOn(global, 'fetch').mockResolvedValue({ ok: true, json: async () => plan })
+    render(<App />)
+    await screen.findAllByText('First task')
+    const table = screen.getByRole('separator', { name: 'Task table and timeline boundary' })
+    expect(table).toHaveAttribute('aria-valuemax', '300')
+    expect(table).toHaveAttribute('aria-valuenow', '300')
+    expect(screen.getByRole('separator', { name: 'Task and owner boundary' })).toHaveAttribute('aria-valuenow', '200')
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: desktopWidth })
+  })
+
+  it('discards malformed column preferences', async () => {
+    localStorage.setItem('ganttai.columnWidths.v1', '{bad json')
+    vi.spyOn(global, 'fetch').mockResolvedValue({ ok: true, json: async () => plan })
+    render(<App />)
+    await screen.findAllByText('First task')
+    expect(screen.getByRole('separator', { name: 'Task table and timeline boundary' })).toHaveAttribute('aria-valuenow', '310')
+  })
+
+  it('normalizes mobile defaults when the viewport expands to desktop', async () => {
+    const desktopWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 520 })
+    vi.spyOn(global, 'fetch').mockResolvedValue({ ok: true, json: async () => plan })
+    render(<App />)
+    await screen.findAllByText('First task')
+    expect(screen.queryByRole('separator')).not.toBeInTheDocument()
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 })
+    fireEvent(window, new Event('resize'))
+    expect(await screen.findByRole('separator', { name: 'Task table and timeline boundary' })).toHaveAttribute('aria-valuenow', '260')
+    expect(screen.getByRole('separator', { name: 'Task and owner boundary' })).toHaveAttribute('aria-valuenow', '140')
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: desktopWidth })
+  })
+
   it('switches mobile surfaces without losing the assistant draft', async () => {
+    const desktopWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 820 })
     class Socket {
       static instance
       constructor() { this.listeners = {}; Socket.instance = this }
@@ -96,6 +209,8 @@ describe('plan view', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'AI assistant' }))
     expect(screen.getByLabelText('Request a plan change')).toHaveValue('Keep this draft')
     expect(container.querySelector('.workspace-frame')).toHaveClass('mobile-ai')
+    expect(screen.queryByRole('separator')).not.toBeInTheDocument()
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: desktopWidth })
   })
 
   it('stacks an operation error with rejected-record feedback', async () => {
