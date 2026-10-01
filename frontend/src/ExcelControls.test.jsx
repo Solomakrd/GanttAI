@@ -7,6 +7,7 @@ const task = { id: 'a', task: 'Imported', description: '', assignee: 'A', durati
 const file = new File(['workbook'], 'tasks.xlsx', { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
 
 function selectFile() {
+  fireEvent.click(screen.getByRole('button', { name: 'Import' }))
   fireEvent.change(screen.getByLabelText('Import workbook (.xlsx)'), { target: { files: [file] } })
 }
 
@@ -23,6 +24,7 @@ describe('Excel exchange controls', () => {
     const onImport = vi.fn()
     render(<ExcelControls tasks={[task]} onImport={onImport} />)
     selectFile()
+    expect(screen.getByRole('button', { name: 'Close import dialog' })).toHaveFocus()
     expect(screen.getByLabelText('Project start date')).toHaveAttribute('type', 'date')
     expect(screen.getByLabelText('Project start date')).toHaveValue('')
     expect(screen.getByRole('button', { name: 'Import plan' })).toBeDisabled()
@@ -56,6 +58,7 @@ describe('Excel exchange controls', () => {
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Imported 1 tasks'))
     expect(onImport).toHaveBeenCalledWith([task])
     expect(screen.getByRole('button', { name: 'Export Excel' })).toBeEnabled()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Import' })).toHaveFocus())
   })
 
   it('allows selecting the same workbook after validation failure and after success', async () => {
@@ -63,6 +66,7 @@ describe('Excel exchange controls', () => {
     const fetch = vi.spyOn(global, 'fetch').mockResolvedValueOnce({ ok: false, status: 422, json: async () => ({ detail: { sheet: 'Tasks', row: 3, column: 'длительность', message: 'Use a positive duration.' } }) }).mockResolvedValue({ ok: true, json: async () => ({ tasks: [task] }) })
     const onImport = vi.fn()
     render(<ExcelControls tasks={[]} onImport={onImport} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Import' }))
     const input = screen.getByLabelText('Import workbook (.xlsx)')
     await user.upload(input, file)
     selectDate()

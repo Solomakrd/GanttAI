@@ -5,6 +5,10 @@ import App from './App'
 
 const plan = { tasks: [{ id: 'one', task: 'First task', description: '', assignee: 'Maya', duration: 2, start_date: '2026-10-05', end_date: '2026-10-06', predecessors: [] }, { id: 'two', task: 'Second task', description: '', assignee: 'Leo', duration: 1, start_date: '2026-10-07', end_date: '2026-10-07', predecessors: ['one'] }] }
 
+function openImport() {
+  fireEvent.click(screen.getByRole('button', { name: 'Import' }))
+}
+
 beforeEach(() => { vi.restoreAllMocks(); localStorage.clear() })
 afterEach(() => { cleanup() })
 
@@ -49,6 +53,62 @@ describe('plan view', () => {
     expect(container.querySelector('.timeline-scroll')).toBeInTheDocument()
   })
 
+  it('keeps a broad, many-task plan aligned and editable', async () => {
+    const tasks = Array.from({ length: 24 }, (_, index) => {
+      const start = new Date(Date.UTC(2026, 0, 1 + index))
+      const end = new Date(Date.UTC(2026, 0, 1 + index))
+      return { id: `task-${index}`, task: `Task ${index + 1}`, description: '', assignee: `Owner ${index + 1}`, duration: 1, start_date: start.toISOString().slice(0, 10), end_date: end.toISOString().slice(0, 10), predecessors: [] }
+    })
+    vi.spyOn(global, 'fetch').mockResolvedValue({ ok: true, json: async () => ({ project_id: 'wide-plan', conversation_id: 'c1', workspace_token: 'token', version: 1, plan: { tasks }, messages: [] }) })
+    const { container } = render(<App />)
+    await screen.findAllByText('Task 24')
+    expect(container.querySelectorAll('.task-table .task-row')).toHaveLength(24)
+    expect(container.querySelectorAll('.plot .task-bar')).toHaveLength(24)
+    expect(container.querySelector('.task-table')).toBeInTheDocument()
+    expect(parseInt(container.querySelector('.timeline').style.minWidth, 10)).toBeGreaterThan(1500)
+    expect(screen.getByRole('button', { name: 'Zoom out' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Task 24 details' }))
+    expect(screen.getByRole('dialog')).toHaveAccessibleName('Edit task')
+  })
+
+  it('switches mobile surfaces without losing the assistant draft', async () => {
+    class Socket {
+      static instance
+      constructor() { this.listeners = {}; Socket.instance = this }
+      addEventListener(name, callback) { this.listeners[name] = callback }
+      send() {}
+      close() {}
+      emit(payload) { this.listeners.message({ data: JSON.stringify(payload) }) }
+    }
+    vi.stubGlobal('WebSocket', Socket)
+    vi.spyOn(global, 'fetch').mockResolvedValue({ ok: true, json: async () => ({
+      project_id: 'p1', conversation_id: 'c1', workspace_token: 'token', version: 1, plan, messages: [],
+    }) })
+    const { container } = render(<App />)
+    await screen.findAllByText('First task')
+    act(() => Socket.instance.emit({ type: 'connected', version: 1 }))
+    fireEvent.click(screen.getByRole('tab', { name: 'AI assistant' }))
+    expect(screen.getByRole('tablist', { name: 'Workspace surfaces' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'AI assistant' })).toHaveAttribute('aria-controls', 'assistant-panel')
+    expect(screen.getByRole('tabpanel', { name: 'AI assistant' })).toHaveAttribute('id', 'assistant-panel')
+    fireEvent.change(screen.getByLabelText('Request a plan change'), { target: { value: 'Keep this draft' } })
+    fireEvent.click(screen.getByRole('tab', { name: 'Plan' }))
+    fireEvent.click(screen.getByRole('tab', { name: 'AI assistant' }))
+    expect(screen.getByLabelText('Request a plan change')).toHaveValue('Keep this draft')
+    expect(container.querySelector('.workspace-frame')).toHaveClass('mobile-ai')
+  })
+
+  it('stacks an operation error with rejected-record feedback', async () => {
+    vi.spyOn(global, 'fetch')
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ tasks: [plan.tasks[0], { id: 'bad', task: '', duration: -1, start_date: 'bad', end_date: 'bad', predecessors: [] }] }) })
+      .mockRejectedValueOnce(new Error('offline'))
+    const { container } = render(<App />)
+    await screen.findByText(/invalid task record/)
+    fireEvent.click(screen.getByRole('button', { name: 'New project' }))
+    await screen.findByText(/Cannot reach the Plan API/)
+    expect(container.querySelector('.notice-stack').querySelectorAll('[role="alert"]')).toHaveLength(2)
+  })
+
   it('replaces the chart after upload, exports the displayed plan, and restores the seed on remount', async () => {
     const imported = { tasks: [
       { ...plan.tasks[0], id: 'new-one', task: 'Imported root' },
@@ -57,6 +117,7 @@ describe('plan view', () => {
     const fetch = vi.spyOn(global, 'fetch').mockResolvedValueOnce({ ok: true, json: async () => plan }).mockResolvedValueOnce({ ok: true, json: async () => imported }).mockRejectedValueOnce(new Error('offline')).mockResolvedValue({ ok: true, json: async () => plan })
     const { unmount } = render(<App />)
     await screen.findAllByText('First task')
+    openImport()
     fireEvent.change(screen.getByLabelText('Import workbook (.xlsx)'), { target: { files: [new File(['xlsx'], 'tasks.xlsx')] } })
     fireEvent.change(screen.getByLabelText('Project start date'), { target: { value: '2026-10-02' } })
     fireEvent.click(screen.getByRole('button', { name: 'Import plan' }))
@@ -81,6 +142,7 @@ describe('plan view', () => {
     else fetch.mockRejectedValueOnce(new Error('offline'))
     render(<App />)
     await screen.findAllByText('First task')
+    openImport()
     fireEvent.change(screen.getByLabelText('Import workbook (.xlsx)'), { target: { files: [new File(['xlsx'], 'tasks.xlsx')] } })
     fireEvent.change(screen.getByLabelText('Project start date'), { target: { value: '2026-10-02' } })
     fireEvent.click(screen.getByRole('button', { name: 'Import plan' }))
@@ -187,6 +249,7 @@ describe('plan view', () => {
 
     render(<App />)
     await screen.findAllByText('First task')
+    openImport()
     fireEvent.change(screen.getByLabelText('Import workbook (.xlsx)'), { target: { files: [new File(['xlsx'], 'tasks.xlsx')] } })
     fireEvent.change(screen.getByLabelText('Project start date'), { target: { value: '2026-10-02' } })
     fireEvent.click(screen.getByRole('button', { name: 'Import plan' }))

@@ -76,13 +76,13 @@ export function PlanChat({ project, disabled, onPlan, onOperation }) {
   }
 
   return <aside className="plan-chat" aria-label="Plan assistant">
-    <div className="chat-heading"><div><span className="eyebrow">MCP agent</span><h2>Edit the plan</h2></div><span className={`connection ${connection}`}>{connection}</span></div>
+    <div className="chat-heading"><span className="ai-orb" aria-hidden="true">✦</span><div><h2>AI assistant</h2><p>Edits the plan with you</p></div><span className={`connection ${connection}`}>{connection}</span></div>
     <div className="transcript" aria-live="polite">
-      {messages.filter((message) => message.role !== 'system').map((message, index) => <article className={`chat-message ${message.role}`} key={message.id || `${message.role}-${index}`}><strong>{message.role === 'user' ? 'You' : 'Assistant'}</strong><p>{message.content}</p></article>)}
+      {messages.filter((message) => message.role !== 'system').map((message, index) => <article className={`chat-message ${message.role}`} key={message.id || `${message.role}-${index}`}><strong>{message.role === 'user' ? 'You' : 'GanttAI'}</strong><div className="chat-bubble"><p>{message.content}</p></div></article>)}
       {!messages.some((message) => message.role !== 'system') && <p className="chat-empty">Ask for bulk changes, such as moving a milestone, reassigning work, or changing dependencies.</p>}
     </div>
     {operation && <div className="chat-operation" role="status"><span className="spinner" />{operation}<button type="button" onClick={() => socket.current?.send(JSON.stringify({ type: 'cancel' }))}>Cancel</button></div>}
     {error && <div className="chat-error" role="alert">{error} <button type="button" onClick={() => { setError(null); setDraft(lastRequest); if (connection === 'disconnected') setRetry((value) => value + 1) }}>Retry</button></div>}
-    <form className="chat-composer" onSubmit={send}><label htmlFor="plan-request">Request a plan change</label><textarea id="plan-request" rows="3" value={draft} disabled={disabled || Boolean(operation) || connection !== 'connected'} onChange={(event) => setDraft(event.target.value)} placeholder="Move QA after launch prep and assign it to Maya" /><button type="submit" disabled={!draft.trim() || disabled || Boolean(operation) || connection !== 'connected'}>Send request</button></form>
+    <form className="chat-composer" onSubmit={send}><label htmlFor="plan-request">Request a plan change</label><div className="composer-box"><textarea id="plan-request" rows="3" value={draft} disabled={disabled || Boolean(operation) || connection !== 'connected'} onChange={(event) => setDraft(event.target.value)} placeholder="Move QA after launch prep and assign it to Maya" /><div><span>Changes create a new plan version</span><button type="submit" disabled={!draft.trim() || disabled || Boolean(operation) || connection !== 'connected'} aria-label="Send request">↑</button></div></div></form>
   </aside>
 }

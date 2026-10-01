@@ -17,6 +17,7 @@ export default function App() {
   const [imported, setImported] = useState(false)
   const [notice, setNotice] = useState(null)
   const [selectedTaskId, setSelectedTaskId] = useState(null)
+  const [mobileSurface, setMobileSurface] = useState('plan')
   const loadPlan = useCallback(() => {
     const controller = new AbortController()
     setState((current) => ({ ...current, status: 'loading', error: null }))
@@ -107,25 +108,49 @@ export default function App() {
   }
 
   const selectedTask = state.tasks.find((task) => task.id === selectedTaskId)
+  const activeProjectIndex = Math.max(0, state.workspaceProjects.findIndex((project) => project.projectId === state.projectId))
+  const projectLabel = `Project ${activeProjectIndex + 1}`
 
   useEffect(() => {
     if (selectedTaskId && !selectedTask) setSelectedTaskId(null)
   }, [selectedTaskId, selectedTask])
 
   return <main className="app-shell">
-    <header className="topbar"><a className="brand" href="/" aria-label="GanttAI home"><span className="brand-mark">G</span><span>Gantt<span className="brand-accent">AI</span></span></a><div className="topbar-actions">{state.workspaceProjects.length > 1 && <select aria-label="Active project" value={state.projectId || ''} disabled={busy} onChange={(event) => switchProject(event.target.value)}>{state.workspaceProjects.map((project, index) => <option key={project.projectId} value={project.projectId}>Project {index + 1}</option>)}</select>}{state.projectId && <button type="button" disabled={busy || state.version <= 1} onClick={undo}>Undo</button>}<button type="button" disabled={busy || state.status === 'loading'} onClick={startNewProject}>New project</button><div className="topbar-meta"><span className="status-dot" />{imported ? 'Imported workspace' : 'Saved workspace'} <span className="avatar">M</span></div></div></header>
-    <section className="hero"><div><p className="eyebrow">Project workspace / Q4 launch</p><h1>Make the plan<br /><em>visible.</em></h1><p className="hero-copy">A shared timeline for turning focused work into forward motion. Start with the seeded plan, then shape what comes next.</p></div><div className="hero-note"><span>01</span><p>FIRST LOOK<br /><strong>Five workstreams<br />already in motion</strong></p></div></section>
-    <ExcelControls tasks={state.tasks} project={state} disabled={state.status !== 'ready' || busy} onOperation={setExcelBusy} onImport={(result) => {
-      setImported(true)
-       setSelectedTaskId(null)
-       if (Array.isArray(result)) setState((current) => ({ ...current, tasks: result }))
-       else setState((current) => ({ ...current, ...result, token: current.token, workspaceProjects: current.workspaceProjects.map((item) => item.projectId === result.projectId ? { ...item, version: result.version } : item), status: 'ready', error: null }))
-    }} />
-    {state.status === 'loading' && <div className="message loading-message" role="status"><span className="spinner" />Loading your plan...</div>}
-    {state.status === 'error' && <div className="message error-message" role="alert"><div><strong>We could not load the plan.</strong><span>Check that the API and database are running, then try again.</span></div><button type="button" onClick={loadPlan}>Retry</button></div>}
-    {notice && <div className="warning" role="alert">{notice}</div>}
-    {state.status === 'ready' && <div className="workspace-grid"><GanttChart tasks={state.tasks} disabled={busy} onSelectTask={state.projectId ? setSelectedTaskId : undefined} />{state.projectId && <PlanChat project={state} disabled={busy} onOperation={setChatBusy} onPlan={acceptChatPlan} />}{state.rejectedIds?.length > 0 && <div className="warning" role="alert">{state.rejectedIds.length} invalid task record{state.rejectedIds.length > 1 ? 's were' : ' was'} excluded ({state.rejectedIds.join(', ')}).</div>}</div>}
+    <header className="topbar">
+      <a className="brand" href="/" aria-label="GanttAI home"><span className="brand-mark" aria-hidden="true" /><span className="brand-name">GanttAI</span></a>
+      <div className="project-switcher">
+        <label htmlFor="active-project">Active project</label>
+        <select id="active-project" aria-label="Active project" value={state.projectId || ''} disabled={busy || !state.projectId} onChange={(event) => switchProject(event.target.value)}>{state.workspaceProjects.map((project, index) => <option key={project.projectId} value={project.projectId}>Project {index + 1}</option>)}</select>
+      </div>
+      <div className="topbar-actions">
+        {state.projectId && <button type="button" className="icon-action" disabled={busy || state.version <= 1} onClick={undo} aria-label="Undo">↶<span>Undo</span></button>}
+        <button type="button" aria-label="New project" disabled={busy || state.status === 'loading'} onClick={startNewProject}><span aria-hidden="true">＋</span><span>New project</span></button>
+        <ExcelControls tasks={state.tasks} project={state} disabled={state.status !== 'ready' || busy} onOperation={setExcelBusy} onImport={(result) => {
+          setImported(true)
+          setSelectedTaskId(null)
+          if (Array.isArray(result)) setState((current) => ({ ...current, tasks: result }))
+          else setState((current) => ({ ...current, ...result, token: current.token, workspaceProjects: current.workspaceProjects.map((item) => item.projectId === result.projectId ? { ...item, version: result.version } : item), status: 'ready', error: null }))
+        }} />
+        <div className="workspace-state"><span className="status-dot" />{imported ? 'Imported workspace' : 'Saved workspace'}<span className="avatar" aria-hidden="true">GA</span></div>
+      </div>
+    </header>
+    <nav className="mobile-tabs" aria-label="Workspace surfaces" role="tablist">
+      <button id="plan-tab" type="button" role="tab" aria-controls="plan-panel" aria-selected={mobileSurface === 'plan'} tabIndex={mobileSurface === 'plan' ? 0 : -1} onClick={() => setMobileSurface('plan')}>Plan</button>
+      <button id="assistant-tab" type="button" role="tab" aria-controls="assistant-panel" aria-selected={mobileSurface === 'ai'} tabIndex={mobileSurface === 'ai' ? 0 : -1} onClick={() => setMobileSurface('ai')}>AI assistant</button>
+    </nav>
+    <div className={`workspace-frame mobile-${mobileSurface}`}>
+      <section id="plan-panel" className="plan-surface" role="tabpanel" aria-labelledby="plan-tab">
+        <div className="workspace-heading"><div><span className="eyebrow">Planning workspace</span><h1>{projectLabel}</h1><p>{state.tasks.length} task{state.tasks.length === 1 ? '' : 's'} · version {state.version}</p></div><span className="save-state"><i />{imported ? 'Import saved' : 'Workspace saved'}</span></div>
+        {state.status === 'loading' && <div className="message loading-message" role="status"><span className="spinner" />Loading your plan...</div>}
+        {state.status === 'error' && <div className="message error-message" role="alert"><div><strong>We could not load the plan.</strong><span>Check that the API and database are running, then try again.</span></div><button type="button" onClick={loadPlan}>Retry</button></div>}
+        {state.status === 'ready' && <GanttChart tasks={state.tasks} disabled={busy} onSelectTask={state.projectId ? setSelectedTaskId : undefined} />}
+      </section>
+      <div id="assistant-panel" className="assistant-surface" role="tabpanel" aria-labelledby="assistant-tab">{state.status === 'ready' && state.projectId ? <PlanChat project={state} disabled={busy} onOperation={setChatBusy} onPlan={acceptChatPlan} /> : <div className="assistant-placeholder"><span className="spinner" />Preparing assistant...</div>}</div>
+    </div>
+    {(notice || state.rejectedIds?.length > 0) && <div className="notice-stack">
+      {notice && <div className="app-notice" role="alert">{notice}</div>}
+      {state.rejectedIds?.length > 0 && <div className="app-notice" role="alert">{state.rejectedIds.length} invalid task record{state.rejectedIds.length > 1 ? 's were' : ' was'} excluded ({state.rejectedIds.join(', ')}).</div>}
+    </div>}
     {selectedTask && <TaskDetailsModal task={selectedTask} tasks={state.tasks} disabled={busy} onClose={() => setSelectedTaskId(null)} onSave={saveTask} />}
-    <footer><span>GANTTAI / PROJECT VIEW</span><span>PLAN API · LIVE</span></footer>
   </main>
 }
