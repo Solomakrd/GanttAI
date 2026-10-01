@@ -169,7 +169,12 @@ def test_openai_adapter_uses_only_allowlisted_tools_without_network_calls():
     assert {tool["name"] for tool in responses.requests[0]["tools"]} == {"read_plan", "add_task", "update_task", "set_dependencies", "delete_tasks"}
     assert "previous_response_id" not in responses.requests[1]
     assert [item["type"] for item in responses.requests[1]["input"][-2:]] == ["function_call", "function_call_output"]
-    assert any(event.get("tool") == "read_plan" for event in events)
+    assert events == [
+        {"type": "status", "code": "planning"},
+        {"type": "tool", "tool": "read_plan", "status": "running"},
+        {"type": "tool", "tool": "read_plan", "status": "complete", "task_count": 5},
+        {"type": "status", "code": "planning"},
+    ]
 
 
 def test_default_client_points_to_openrouter(monkeypatch):
@@ -221,6 +226,12 @@ def test_openrouter_can_correct_invalid_tool_arguments():
     assert result.tasks[-1].task == "Leo onboarding"
     assert result.tasks[-1].duration == 5
     assert [event["status"] for event in events if event.get("tool") == "add_task"] == ["running", "failed", "running", "complete"]
+    assert [event for event in events if event.get("status") == "failed"] == [
+        {"type": "tool", "tool": "add_task", "status": "failed"},
+    ]
+    assert [event for event in events if event.get("status") == "complete"][-1] == {
+        "type": "tool", "tool": "add_task", "status": "complete", "task_count": 6,
+    }
 
 
 def test_openai_adapter_hides_unknown_tool_names():

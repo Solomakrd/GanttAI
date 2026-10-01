@@ -2,6 +2,28 @@ import { useEffect, useRef, useState } from 'react'
 import { connectPlanChat } from '../api'
 import { useI18n } from '../i18n'
 
+const toolKeys = {
+  read_plan: 'chatToolReadPlan',
+  add_task: 'chatToolAddTask',
+  update_task: 'chatToolUpdateTask',
+  set_dependencies: 'chatToolSetDependencies',
+  delete_tasks: 'chatToolDeleteTasks',
+}
+
+function operationText(operation, t) {
+  if (operation.key === 'startingRequest' && !operation.type) return t(operation.key)
+  if (operation.type === 'status' && operation.code === 'planning') return t('chatPlanning')
+  const toolKey = operation.type === 'tool' && Object.hasOwn(toolKeys, operation.tool) ? toolKeys[operation.tool] : null
+  if (!toolKey || !['running', 'complete', 'failed'].includes(operation.status)) return t('chatOperation')
+  const tool = t(toolKey)
+  if (operation.status === 'running') return t('chatToolRunning', { tool })
+  if (operation.status === 'failed') return t('chatToolFailed', { tool })
+  if (Number.isSafeInteger(operation.task_count) && operation.task_count >= 0 && operation.task_count <= 500) {
+    return t('chatToolCompleteWithCount', { tool, count: operation.task_count })
+  }
+  return t('chatToolComplete', { tool })
+}
+
 export function PlanChat({ project, disabled, onPlan, onOperation }) {
   const { t } = useI18n()
   const [messages, setMessages] = useState(project.messages || [])
@@ -30,8 +52,7 @@ export function PlanChat({ project, disabled, onPlan, onOperation }) {
         onOperation?.(false)
         setError({ key: 'chatDisconnected' })
       }
-      if (event.type === 'status') setOperation(event.message)
-      if (event.type === 'tool') setOperation(`${event.tool}: ${event.status}${event.result ? ` - ${event.result}` : ''}`)
+      if (event.type === 'status' || event.type === 'tool') setOperation(event)
       if (event.type === 'complete') {
         if (event.version !== version.current + 1) {
           setOperation(null)
@@ -83,7 +104,7 @@ export function PlanChat({ project, disabled, onPlan, onOperation }) {
       {messages.filter((message) => message.role !== 'system').map((message, index) => <article className={`chat-message ${message.role}`} key={message.id || `${message.role}-${index}`}><strong>{message.role === 'user' ? t('you') : 'GanttAI'}</strong><div className="chat-bubble"><p>{message.content}</p></div></article>)}
       {!messages.some((message) => message.role !== 'system') && <p className="chat-empty">{t('chatEmpty')}</p>}
     </div>
-    {operation && <div className="chat-operation" role="status"><span className="spinner" />{operation.key ? t(operation.key) : operation}<button type="button" onClick={() => socket.current?.send(JSON.stringify({ type: 'cancel' }))}>{t('cancel')}</button></div>}
+    {operation && <div className="chat-operation" role="status"><span className="spinner" />{operationText(operation, t)}<button type="button" onClick={() => socket.current?.send(JSON.stringify({ type: 'cancel' }))}>{t('cancel')}</button></div>}
     {error && <div className="chat-error" role="alert">{error.key ? t(error.key) : error} <button type="button" onClick={() => { setError(null); setDraft(lastRequest); if (connection === 'disconnected') setRetry((value) => value + 1) }}>{t('retry')}</button></div>}
     <form className="chat-composer" onSubmit={send}><label htmlFor="plan-request">{t('requestChange')}</label><div className="composer-box"><textarea id="plan-request" rows="3" value={draft} disabled={disabled || Boolean(operation) || connection !== 'connected'} onChange={(event) => setDraft(event.target.value)} placeholder={t('requestPlaceholder')} /><div><span>{t('newVersionHint')}</span><button type="submit" disabled={!draft.trim() || disabled || Boolean(operation) || connection !== 'connected'} aria-label={t('sendRequest')}>↑</button></div></div></form>
   </aside>

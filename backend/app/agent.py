@@ -49,7 +49,7 @@ class OpenAIPlanAgent:
             failed = False
             last_error = None
             for _ in range(31):
-                await status({"type": "status", "status": "thinking", "message": "Planning safe changes..."})
+                await status({"type": "status", "code": "planning"})
                 request = {"model": self.model, "instructions": SYSTEM_PROMPT, "input": inputs, "tools": tools,
                            "max_output_tokens": int(os.getenv("OPENROUTER_MAX_OUTPUT_TOKENS", "2000"))}
                 response = await self.client.responses.create(**request)
@@ -84,13 +84,13 @@ class OpenAIPlanAgent:
                             raise PlanEditError(payload.get("error") or "The plan edit was not valid.")
                         changed = changed or name != "read_plan"
                         output = json.dumps(payload)
-                        await status({"type": "tool", "tool": name, "status": "complete", "result": f"Validated {payload['task_count']} tasks."})
+                        await status({"type": "tool", "tool": name, "status": "complete", "task_count": payload["task_count"]})
                     except Exception as error:
                         round_failed = True
                         detail = str(error)[:500] if isinstance(error, PlanEditError) else "Tool arguments were invalid." if isinstance(error, (MCPError, ValidationError, TypeError, ValueError)) else "The tool could not complete."
                         round_error = detail
                         output = json.dumps({"ok": False, "error": detail})
-                        await status({"type": "tool", "tool": name, "status": "failed", "result": detail})
+                        await status({"type": "tool", "tool": name, "status": "failed"})
                     tool_outputs.append({"type": "function_call_output", "call_id": call.call_id, "output": output})
                 failed = round_failed
                 last_error = round_error

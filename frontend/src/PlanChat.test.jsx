@@ -42,6 +42,12 @@ describe('plan chat', () => {
     render(<PlanChat project={project} onPlan={onPlan} />)
     const socket = FakeSocket.instances[0]
     act(() => socket.emit('message', { data: JSON.stringify({ type: 'connected', version: 1 }) }))
+    act(() => socket.emit('message', { data: JSON.stringify({ type: 'status', code: 'planning' }) }))
+    act(() => socket.emit('message', { data: JSON.stringify({ type: 'clarification', message: 'Which task should move?' }) }))
+    expect(screen.getByText('Which task should move?')).toBeInTheDocument()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    act(() => socket.emit('message', { data: JSON.stringify({ type: 'error', code: 'processing', message: 'Meaningful server error.' }) }))
+    expect(screen.getByRole('alert')).toHaveTextContent('Meaningful server error.')
     act(() => socket.emit('message', { data: JSON.stringify({ type: 'complete', version: 2, plan: { tasks: [{ id: 'bad' }] }, message: 'bad' }) }))
     expect(screen.getByRole('alert')).toHaveTextContent('invalid response')
     act(() => socket.emit('message', { data: JSON.stringify({ type: 'cancelled', message: 'Request cancelled. The plan was not changed.' }) }))
@@ -50,15 +56,50 @@ describe('plan chat', () => {
     expect(onPlan).not.toHaveBeenCalled()
   })
 
-  it('shows safe tool lifecycle and cancellation control', () => {
+  it('localizes every known tool lifecycle and count without exposing protocol values', () => {
     vi.stubGlobal('WebSocket', FakeSocket)
     render(<PlanChat project={project} onPlan={vi.fn()} />)
     const socket = FakeSocket.instances[0]
     act(() => socket.emit('message', { data: JSON.stringify({ type: 'connected', version: 1 }) }))
-    act(() => socket.emit('message', { data: JSON.stringify({ type: 'tool', tool: 'update_task', status: 'running' }) }))
-    expect(screen.getByRole('status')).toHaveTextContent('update_task: running')
+    for (const [tool, label] of Object.entries({ read_plan: 'Reading the plan', add_task: 'Adding a task', update_task: 'Updating a task', set_dependencies: 'Updating dependencies', delete_tasks: 'Deleting tasks' })) {
+      act(() => socket.emit('message', { data: JSON.stringify({ type: 'tool', tool, status: 'running' }) }))
+      expect(screen.getByRole('status')).toHaveTextContent(label)
+      expect(screen.getByRole('status')).not.toHaveTextContent(tool)
+    }
+    act(() => socket.emit('message', { data: JSON.stringify({ type: 'tool', tool: 'update_task', status: 'complete', task_count: 1 }) }))
+    expect(screen.getByRole('status')).toHaveTextContent('Validated 1 task.')
+    act(() => socket.emit('message', { data: JSON.stringify({ type: 'tool', tool: 'update_task', status: 'complete', task_count: 12 }) }))
+    expect(screen.getByRole('status')).toHaveTextContent('Validated 12 tasks.')
+    act(() => socket.emit('message', { data: JSON.stringify({ type: 'tool', tool: 'update_task', status: 'complete', task_count: 500 }) }))
+    expect(screen.getByRole('status')).toHaveTextContent('Validated 500 tasks.')
+    act(() => socket.emit('message', { data: JSON.stringify({ type: 'tool', tool: 'update_task', status: 'complete', task_count: '12' }) }))
+    expect(screen.getByRole('status')).toHaveTextContent('Completed: Updating a task.')
+    expect(screen.getByRole('status')).not.toHaveTextContent('12')
+    for (const taskCount of [501, Number.MAX_SAFE_INTEGER + 1]) {
+      act(() => socket.emit('message', { data: JSON.stringify({ type: 'tool', tool: 'update_task', status: 'complete', task_count: taskCount }) }))
+      expect(screen.getByRole('status')).toHaveTextContent('Completed: Updating a task.')
+      expect(screen.getByRole('status')).not.toHaveTextContent(String(taskCount))
+    }
+    act(() => socket.emit('message', { data: JSON.stringify({ type: 'tool', tool: 'update_task', status: 'failed', result: 'provider secret' }) }))
+    expect(screen.getByRole('status')).toHaveTextContent('Recovering...')
+    expect(screen.getByRole('status')).not.toHaveTextContent('provider secret')
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(JSON.parse(socket.send.mock.calls[0][0])).toEqual({ type: 'cancel' })
+  })
+
+  it('uses generic localized progress for malformed or unknown events', () => {
+    vi.stubGlobal('WebSocket', FakeSocket)
+    render(<PlanChat project={project} onPlan={vi.fn()} />)
+    const socket = FakeSocket.instances[0]
+    act(() => socket.emit('message', { data: JSON.stringify({ type: 'status', code: 'future_backend_code', key: 'raw_key', message: 'raw status' }) }))
+    expect(screen.getByRole('status')).toHaveTextContent('Working on your plan...')
+    expect(screen.getByRole('status')).not.toHaveTextContent(/future_backend_code|raw_key|raw status/)
+    act(() => socket.emit('message', { data: JSON.stringify({ type: 'tool', tool: 'run_shell', status: 'complete', task_count: '12' }) }))
+    expect(screen.getByRole('status')).toHaveTextContent('Working on your plan...')
+    expect(screen.getByRole('status')).not.toHaveTextContent(/run_shell|12/)
+    act(() => socket.emit('message', { data: JSON.stringify({ type: 'tool', tool: 'constructor', status: 'running' }) }))
+    expect(screen.getByRole('status')).toHaveTextContent('Working on your plan...')
+    expect(screen.getByRole('status')).not.toHaveTextContent(/constructor|function|native code/)
   })
 
   it('reconnects when retry is selected after a network close', () => {
