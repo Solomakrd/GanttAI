@@ -15,7 +15,7 @@ class FakeSocket {
 
 const project = { projectId: 'project-1', token: 'secret-token', version: 1, messages: [], tasks: [task] }
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); FakeSocket.instances = [] })
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); FakeSocket.instances = [] })
 
 describe('plan chat', () => {
   it('sends the current version and applies only a validated complete plan', async () => {
@@ -127,5 +127,64 @@ describe('plan chat', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('disconnected')
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
     expect(FakeSocket.instances).toHaveLength(2)
+  })
+
+  it('automatically reconnects without replaying the interrupted request', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('WebSocket', FakeSocket)
+    const onPlan = vi.fn()
+    render(<PlanChat project={project} onPlan={onPlan} />)
+    const first = FakeSocket.instances[0]
+    act(() => first.emit('message', { data: JSON.stringify({ type: 'connected', version: 1 }) }))
+    fireEvent.change(screen.getByLabelText('Request a plan change'), { target: { value: 'Reassign A' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send request' }))
+    expect(first.send).toHaveBeenCalledOnce()
+
+    act(() => first.emit('close', { code: 1006 }))
+    await act(() => vi.advanceTimersByTimeAsync(1000))
+    const reconnected = FakeSocket.instances[1]
+    act(() => reconnected.emit('open', {}))
+    act(() => reconnected.emit('message', { data: JSON.stringify({ type: 'connected', version: 1 }) }))
+
+    expect(reconnected.send).toHaveBeenCalledOnce()
+    expect(JSON.parse(reconnected.send.mock.calls[0][0])).toEqual({ type: 'auth', token: 'secret-token' })
+    act(() => first.emit('message', { data: JSON.stringify({ type: 'complete', version: 2, plan: { tasks: [task] }, message: 'stale' }) }))
+    expect(onPlan).not.toHaveBeenCalled()
+  })
+
+  it('keeps the composer disabled when the server advanced during disconnect', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('WebSocket', FakeSocket)
+    render(<PlanChat project={project} onPlan={vi.fn()} />)
+    act(() => FakeSocket.instances[0].emit('close', { code: 1006 }))
+    await act(() => vi.advanceTimersByTimeAsync(1000))
+    act(() => FakeSocket.instances[1].emit('message', { data: JSON.stringify({ type: 'connected', version: 2 }) }))
+
+    expect(screen.getByRole('alert')).toHaveTextContent('newer plan')
+    expect(screen.getByLabelText('Request a plan change')).toBeDisabled()
+    expect(FakeSocket.instances[1].send).not.toHaveBeenCalled()
+  })
+
+  it('backs off failed reconnects and stops after cleanup or rejected auth', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('WebSocket', FakeSocket)
+    const view = render(<PlanChat project={project} onPlan={vi.fn()} />)
+    act(() => FakeSocket.instances[0].emit('close', { code: 1006 }))
+    await act(() => vi.advanceTimersByTimeAsync(1000))
+    act(() => FakeSocket.instances[1].emit('close', { code: 1006 }))
+    await act(() => vi.advanceTimersByTimeAsync(1999))
+    expect(FakeSocket.instances).toHaveLength(2)
+    await act(() => vi.advanceTimersByTimeAsync(1))
+    expect(FakeSocket.instances).toHaveLength(3)
+
+    act(() => FakeSocket.instances[2].emit('close', { code: 4408 }))
+    await act(() => vi.advanceTimersByTimeAsync(30000))
+    expect(FakeSocket.instances).toHaveLength(3)
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(FakeSocket.instances).toHaveLength(4)
+    act(() => FakeSocket.instances[3].emit('close', { code: 1006 }))
+    view.unmount()
+    await act(() => vi.advanceTimersByTimeAsync(30000))
+    expect(FakeSocket.instances).toHaveLength(4)
   })
 })

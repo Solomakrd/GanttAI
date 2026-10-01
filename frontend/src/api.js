@@ -216,7 +216,7 @@ export function connectPlanChat(project, onEvent) {
       onEvent({ type: 'error', code: 'protocol', message: 'The chat returned an invalid response. The current plan was kept.' })
     }
   })
-  socket.addEventListener('close', () => onEvent({ type: 'disconnected' }))
+  socket.addEventListener('close', (event) => onEvent({ type: 'disconnected', code: event?.code }))
   socket.addEventListener('error', () => onEvent({ type: 'error', code: 'network', message: 'Chat disconnected. Reconnect and retry.' }))
   return socket
 }

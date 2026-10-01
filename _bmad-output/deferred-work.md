@@ -16,3 +16,6 @@
 - source_plan: none
   summary: Automatically retry the last failed chat request without duplicating its message.
   evidence: Deferred at the user's request so fixes are delivered and manually verified in the stated order.
+- source_plan: plan-chat-websocket-auto-reconnect.md
+  summary: Delivered automatic chat WebSocket reconnection.
+  evidence: Added bounded reconnect backoff, lifecycle guards, terminal authentication handling, and stale-version protection.

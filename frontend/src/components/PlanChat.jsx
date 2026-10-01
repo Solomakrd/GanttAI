@@ -43,46 +43,73 @@ export function PlanChat({ project, disabled, onPlan, onOperation }) {
 
   useEffect(() => {
     if (!project.projectId || !project.token || typeof WebSocket === 'undefined') return undefined
-    setConnection('connecting')
-    const current = connectPlanChat(project, (event) => {
-      if (event.type === 'connected') setConnection('connected')
-      if (event.type === 'disconnected') {
-        setConnection('disconnected')
-        setOperation(null)
-        onOperation?.(false)
-        setError({ key: 'chatDisconnected' })
-      }
-      if (event.type === 'status' || event.type === 'tool') setOperation(event)
-      if (event.type === 'complete') {
-        if (event.version !== version.current + 1) {
+    let stopped = false
+    let reconnectTimer
+    let reconnectAttempts = 0
+    let current
+
+    const connect = () => {
+      if (stopped) return
+      setConnection('connecting')
+      const next = connectPlanChat(project, (event) => {
+        if (stopped || socket.current !== next) return
+        if (event.type === 'connected') {
+          reconnectAttempts = 0
+          if (event.version !== version.current) {
+            setConnection('disconnected')
+            setError({ key: 'staleChat' })
+            return
+          }
+          setConnection('connected')
+          setError(null)
+        }
+        if (event.type === 'disconnected') {
+          socket.current = null
+          setConnection('disconnected')
           setOperation(null)
           onOperation?.(false)
-          setError({ key: 'staleChat' })
-          return
+          setError({ key: 'chatDisconnected' })
+          if (![4401, 4408].includes(event.code)) {
+            const delay = Math.min(1000 * 2 ** reconnectAttempts, 30000)
+            reconnectAttempts += 1
+            reconnectTimer = setTimeout(connect, delay)
+          }
         }
-        setMessages((items) => [...items, { role: 'assistant', content: event.message }])
-        setOperation(null)
-        onOperation?.(false)
-        onPlan({ tasks: event.tasks, version: event.version })
-      }
-      if (event.type === 'clarification') {
-        setMessages((items) => [...items, { role: 'assistant', content: event.message }])
-        setOperation(null)
-        onOperation?.(false)
-      }
-      if (event.type === 'cancelled') {
-        setOperation(null)
-        onOperation?.(false)
-        setError(event.message)
-      }
-      if (event.type === 'error') {
-        setOperation(null)
-        onOperation?.(false)
-        setError(event.code === 'protocol' ? { key: 'chatInvalid' } : event.code === 'network' ? { key: 'chatDisconnected' } : event.message)
-      }
-    })
-    socket.current = current
-    return () => { current.close(); socket.current = null }
+        if (event.type === 'status' || event.type === 'tool') setOperation(event)
+        if (event.type === 'complete') {
+          if (event.version !== version.current + 1) {
+            setOperation(null)
+            onOperation?.(false)
+            setError({ key: 'staleChat' })
+            return
+          }
+          setMessages((items) => [...items, { role: 'assistant', content: event.message }])
+          setOperation(null)
+          onOperation?.(false)
+          onPlan({ tasks: event.tasks, version: event.version })
+        }
+        if (event.type === 'clarification') {
+          setMessages((items) => [...items, { role: 'assistant', content: event.message }])
+          setOperation(null)
+          onOperation?.(false)
+        }
+        if (event.type === 'cancelled') {
+          setOperation(null)
+          onOperation?.(false)
+          setError(event.message)
+        }
+        if (event.type === 'error') {
+          setOperation(null)
+          onOperation?.(false)
+          setError(event.code === 'protocol' ? { key: 'chatInvalid' } : event.code === 'network' ? { key: 'chatDisconnected' } : event.message)
+        }
+      })
+      current = next
+      socket.current = next
+    }
+
+    connect()
+    return () => { stopped = true; clearTimeout(reconnectTimer); current?.close(); if (socket.current === current) socket.current = null }
   }, [project.projectId, project.token, onPlan, onOperation, retry])
 
   const send = (event) => {
