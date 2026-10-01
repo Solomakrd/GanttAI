@@ -31,6 +31,16 @@ describe('plan view', () => {
     expect((await screen.findAllByText('First task')).length).toBeGreaterThan(0)
   })
 
+  it('shows server-provided workspace load errors inside the localized error shell', async () => {
+    vi.spyOn(global, 'fetch').mockResolvedValue({
+      ok: false, status: 422, json: async () => ({ detail: 'Server workspace detail' }),
+    })
+    render(<App />)
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('We could not load the plan.')
+    expect(alert).toHaveTextContent('Server workspace detail')
+  })
+
   it('keeps an empty plan usable', async () => {
     vi.spyOn(global, 'fetch').mockResolvedValue({ ok: true, json: async () => ({ tasks: [] }) })
     render(<App />)
@@ -341,7 +351,7 @@ describe('plan view', () => {
     await screen.findAllByText('First task')
     fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
     await waitFor(() => expect(screen.getByLabelText('Active project')).toHaveValue('p1'))
-    expect(screen.getAllByRole('option')).toHaveLength(2)
+    expect(screen.getByLabelText('Active project').querySelectorAll('option')).toHaveLength(2)
     expect(screen.getByRole('button', { name: 'Undo' })).toBeEnabled()
   })
 

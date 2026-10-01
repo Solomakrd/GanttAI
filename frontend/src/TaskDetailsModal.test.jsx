@@ -36,7 +36,10 @@ describe('task details modal', () => {
 
   it('validates locally, preserves input after a server error, and submits IDs', async () => {
     const user = userEvent.setup()
-    const onSave = vi.fn().mockRejectedValue(new Error('The plan changed while the task was being saved.'))
+    const serverError = Object.assign(new Error('The plan changed while the task was being saved.'), {
+      serverProvided: true, serverMessage: 'The plan changed while the task was being saved.',
+    })
+    const onSave = vi.fn().mockRejectedValue(serverError)
     render(<TaskDetailsModal task={tasks[1]} tasks={tasks} onClose={vi.fn()} onSave={onSave} />)
     await user.clear(screen.getByLabelText('Task name'))
     await user.click(screen.getByRole('button', { name: 'Save changes' }))
@@ -49,5 +52,14 @@ describe('task details modal', () => {
     expect(screen.getByLabelText('Task name')).toHaveValue('Working prototype')
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ task: 'Working prototype', predecessors: [] }))
     await waitFor(() => expect(screen.getByRole('button', { name: 'Save changes' })).toBeEnabled())
+  })
+
+  it('uses the localized fallback for an untagged save exception', async () => {
+    const onSave = vi.fn().mockRejectedValue(new Error('internal parser detail'))
+    render(<TaskDetailsModal task={tasks[0]} tasks={tasks} onClose={vi.fn()} onSave={onSave} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('The task could not be saved')
+    expect(alert).not.toHaveTextContent('internal parser detail')
   })
 })

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { errorDescriptor, useI18n } from '../i18n'
 
 function derivedEnd(start, duration) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !Number.isInteger(duration) || duration < 1) return ''
@@ -9,6 +10,7 @@ function derivedEnd(start, duration) {
 }
 
 export function TaskDetailsModal({ task, tasks, onClose, onSave, disabled = false }) {
+  const { t } = useI18n()
   const [form, setForm] = useState({
     task: task.task, description: task.description, assignee: task.assignee,
     duration: String(task.duration), start_date: task.start_date, predecessors: task.predecessors,
@@ -45,16 +47,16 @@ export function TaskDetailsModal({ task, tasks, onClose, onSave, disabled = fals
     event.preventDefault()
     const duration = Number(form.duration)
     if (disabled || pending) return
-    if (!form.task.trim()) return setError('Task name is required.')
-    if (!form.assignee.trim()) return setError('Assignee is required.')
-    if (!Number.isInteger(duration) || duration < 1 || duration > 730) return setError('Duration must be a whole number from 1 to 730.')
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(form.start_date)) return setError('Choose a valid start date.')
+    if (!form.task.trim()) return setError({ key: 'taskNameRequired' })
+    if (!form.assignee.trim()) return setError({ key: 'assigneeRequired' })
+    if (!Number.isInteger(duration) || duration < 1 || duration > 730) return setError({ key: 'durationInvalid' })
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(form.start_date)) return setError({ key: 'startDateInvalid' })
     setPending(true)
     setError(null)
     try {
       await onSave({ ...form, task: form.task.trim(), assignee: form.assignee.trim(), duration })
     } catch (saveError) {
-      setError(saveError.message || 'The task could not be saved. The current plan was kept.')
+      setError(errorDescriptor(saveError, 'taskSaveFailed'))
       setPending(false)
     }
   }
@@ -62,23 +64,23 @@ export function TaskDetailsModal({ task, tasks, onClose, onSave, disabled = fals
   const unavailable = pending || disabled
   return <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !pending) onClose() }}>
     <section ref={dialog} className="task-modal" role="dialog" aria-modal="true" aria-labelledby="task-modal-title" aria-describedby="task-modal-help" aria-busy={pending}>
-      <div className="modal-heading"><div><span className="eyebrow">Task details</span><h2 id="task-modal-title">Edit task</h2></div><button type="button" className="modal-close" aria-label="Close task details" disabled={pending} onClick={onClose}>&times;</button></div>
+      <div className="modal-heading"><div><span className="eyebrow">{t('taskDetails')}</span><h2 id="task-modal-title">{t('editTask')}</h2></div><button type="button" className="modal-close" aria-label={t('closeTask')} disabled={pending} onClick={onClose}>&times;</button></div>
       <form onSubmit={submit}>
-        <p id="task-modal-help">Update the task and save all changes as one new plan version.</p>
+        <p id="task-modal-help">{t('taskHelp')}</p>
         <div className="modal-fields">
-          <label>Task name<input ref={firstField} value={form.task} disabled={unavailable} onChange={(event) => set('task', event.target.value)} /></label>
-          <label>Assignee<input value={form.assignee} disabled={unavailable} onChange={(event) => set('assignee', event.target.value)} /></label>
-          <label>Duration (days)<input type="number" min="1" max="730" step="1" value={form.duration} disabled={unavailable} onChange={(event) => set('duration', event.target.value)} /></label>
-          <label>Start date<input type="date" value={form.start_date} disabled={unavailable} onChange={(event) => set('start_date', event.target.value)} /></label>
-          <label>End date<input type="date" value={derivedEnd(form.start_date, Number(form.duration))} readOnly aria-readonly="true" /></label>
-          <label className="description-field">Description<textarea rows="4" value={form.description} disabled={unavailable} onChange={(event) => set('description', event.target.value)} /></label>
+          <label>{t('taskName')}<input ref={firstField} value={form.task} disabled={unavailable} onChange={(event) => set('task', event.target.value)} /></label>
+          <label>{t('assignee')}<input value={form.assignee} disabled={unavailable} onChange={(event) => set('assignee', event.target.value)} /></label>
+          <label>{t('durationDays')}<input type="number" min="1" max="730" step="1" value={form.duration} disabled={unavailable} onChange={(event) => set('duration', event.target.value)} /></label>
+          <label>{t('startDate')}<input type="date" value={form.start_date} disabled={unavailable} onChange={(event) => set('start_date', event.target.value)} /></label>
+          <label>{t('endDate')}<input type="date" value={derivedEnd(form.start_date, Number(form.duration))} readOnly aria-readonly="true" /></label>
+          <label className="description-field">{t('description')}<textarea rows="4" value={form.description} disabled={unavailable} onChange={(event) => set('description', event.target.value)} /></label>
         </div>
-        <fieldset disabled={unavailable}><legend>Predecessors</legend>
+        <fieldset disabled={unavailable}><legend>{t('predecessors')}</legend>
           <div className="predecessor-list">{tasks.filter((item) => item.id !== task.id).map((item) => <label key={item.id}><input type="checkbox" checked={form.predecessors.includes(item.id)} onChange={(event) => set('predecessors', event.target.checked ? [...form.predecessors, item.id] : form.predecessors.filter((id) => id !== item.id))} /> <span>{item.task}</span></label>)}</div>
-          {tasks.length === 1 && <p>No other tasks are available.</p>}
+          {tasks.length === 1 && <p>{t('noOtherTasks')}</p>}
         </fieldset>
-        {error && <p className="modal-error" role="alert">{error}</p>}
-        <div className="modal-actions"><button type="button" disabled={pending} onClick={onClose}>Cancel</button><button type="submit" disabled={unavailable}>{pending ? 'Saving...' : 'Save changes'}</button></div>
+        {error && <p className="modal-error" role="alert">{error.key ? t(error.key, error.values) : error.message}</p>}
+        <div className="modal-actions"><button type="button" disabled={pending} onClick={onClose}>{t('cancel')}</button><button type="submit" disabled={unavailable}>{t(pending ? 'saving' : 'saveChanges')}</button></div>
       </form>
     </section>
   </div>

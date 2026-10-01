@@ -1,5 +1,21 @@
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
+function clientError(message, translationKey, translationValues) {
+  const error = new Error(message)
+  error.translationKey = translationKey
+  error.translationValues = translationValues
+  return error
+}
+
+function serverError(message, serverMessage = message, translationKey, translationValues) {
+  const error = new Error(message)
+  error.serverProvided = true
+  error.serverMessage = serverMessage
+  error.translationKey = translationKey
+  error.translationValues = translationValues
+  return error
+}
+
 function parseTask(record) {
   const validText = (value, required = false) => typeof value === 'string' && value.length <= 32767 && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(value) && (!required || value.trim())
   const isCanonicalDate = (value) => {
@@ -56,7 +72,7 @@ export function parsePlan(payload, strict = false) {
     if ((Math.max(...ends) - Math.min(...starts)) / 86400000 + 1 > 730) graphInvalid = true
   }
   if (strict && (!Array.isArray(payload?.tasks) || rejectedIds.length || graphInvalid)) {
-    throw new Error('The API returned an invalid plan. The current plan has been kept; reload or retry.')
+    throw clientError('The API returned an invalid plan. The current plan has been kept; reload or retry.', 'invalidPlan')
   }
   return result
 }
@@ -67,20 +83,29 @@ async function request(path, options) {
     response = await fetch(`${API_URL}${path}`, options)
   } catch (error) {
     if (error.name === 'AbortError') throw error
-    throw new Error('Cannot reach the Plan API. Check your connection and that the API is running, then retry.')
+    throw clientError('Cannot reach the Plan API. Check your connection and that the API is running, then retry.', 'apiUnavailable')
   }
   if (!response.ok) {
-    let message = `Plan API returned ${response.status}. Please retry.`
+    let message
     try {
       const { detail } = await response.json()
-      if (typeof detail === 'string') message = detail
-      else if (Array.isArray(detail)) message = detail.map((issue) => `${issue.loc?.join(' / ')}: ${issue.msg}`).join('; ')
+      if (typeof detail === 'string') throw serverError(detail)
+      if (Array.isArray(detail)) {
+        message = detail.map((issue) => `${issue.loc?.join(' / ')}: ${issue.msg}`).join('; ')
+        if (message) throw serverError(message)
+      }
       else if (detail?.message) {
         const location = [detail.sheet && `Sheet “${detail.sheet}”`, detail.row && `row ${detail.row}`, detail.column && `column ${detail.column}`].filter(Boolean).join(', ')
         message = `${location ? `${location}: ` : ''}${detail.message}`
+        throw serverError(message, detail.message, 'apiValidationDetail', {
+          sheet: detail.sheet, row: detail.row, column: detail.column, message: detail.message,
+        })
       }
-    } catch { /* Keep the HTTP status if the server returned a non-JSON error. */ }
-    throw new Error(message)
+    } catch (error) {
+      if (error.serverProvided) throw error
+      // Keep the HTTP status if the server returned a non-JSON error.
+    }
+    throw clientError(`Plan API returned ${response.status}. Please retry.`, 'apiStatus', { status: response.status })
   }
   return response
 }
@@ -96,12 +121,12 @@ function snapshot(payload) {
     return { projectId: null, conversationId: null, version: 0, tasks: parsed.tasks, rejectedIds: parsed.rejectedIds, messages: [], token: null, legacy: true }
   }
   const parsed = parsePlan(payload?.plan, true)
-  if (typeof payload?.project_id !== 'string' || !Number.isInteger(payload.version) || !Array.isArray(payload.messages)) throw new Error('The API returned an invalid project snapshot.')
+  if (typeof payload?.project_id !== 'string' || !Number.isInteger(payload.version) || !Array.isArray(payload.messages)) throw clientError('The API returned an invalid project snapshot.', 'invalidProject')
   return { projectId: payload.project_id, conversationId: payload.conversation_id, version: payload.version, tasks: parsed.tasks, rejectedIds: [], messages: payload.messages, token: payload.workspace_token || null, legacy: false }
 }
 
 function workspaceProject(record) {
-  if (typeof record?.project_id !== 'string' || !Number.isInteger(record.version)) throw new Error('The API returned an invalid workspace.')
+  if (typeof record?.project_id !== 'string' || !Number.isInteger(record.version)) throw clientError('The API returned an invalid workspace.', 'invalidWorkspace')
   return { projectId: record.project_id, version: record.version, createdAt: record.created_at }
 }
 
@@ -163,7 +188,7 @@ export async function importPlan(file, startDate, signal) {
   const payload = await response.json()
   const parsed = parsePlan(payload)
   if (!Array.isArray(payload.tasks) || parsed.rejectedIds.length) {
-    throw new Error('The API returned an invalid plan. The current plan has been kept; correct the workbook or retry.')
+    throw clientError('The API returned an invalid plan. The current plan has been kept; correct the workbook or retry.', 'invalidImportedPlan')
   }
   return parsed.tasks
 }

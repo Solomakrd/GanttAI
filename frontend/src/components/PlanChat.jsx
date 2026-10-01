@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { connectPlanChat } from '../api'
+import { useI18n } from '../i18n'
 
 export function PlanChat({ project, disabled, onPlan, onOperation }) {
+  const { t } = useI18n()
   const [messages, setMessages] = useState(project.messages || [])
   const [draft, setDraft] = useState('')
   const [connection, setConnection] = useState('connecting')
@@ -26,7 +28,7 @@ export function PlanChat({ project, disabled, onPlan, onOperation }) {
         setConnection('disconnected')
         setOperation(null)
         onOperation?.(false)
-        setError('Chat disconnected. Reconnect and retry.')
+        setError({ key: 'chatDisconnected' })
       }
       if (event.type === 'status') setOperation(event.message)
       if (event.type === 'tool') setOperation(`${event.tool}: ${event.status}${event.result ? ` - ${event.result}` : ''}`)
@@ -34,7 +36,7 @@ export function PlanChat({ project, disabled, onPlan, onOperation }) {
         if (event.version !== version.current + 1) {
           setOperation(null)
           onOperation?.(false)
-          setError('A newer plan is already active. The stale chat result was ignored; reload before retrying.')
+          setError({ key: 'staleChat' })
           return
         }
         setMessages((items) => [...items, { role: 'assistant', content: event.message }])
@@ -55,7 +57,7 @@ export function PlanChat({ project, disabled, onPlan, onOperation }) {
       if (event.type === 'error') {
         setOperation(null)
         onOperation?.(false)
-        setError(event.message)
+        setError(event.code === 'protocol' ? { key: 'chatInvalid' } : event.code === 'network' ? { key: 'chatDisconnected' } : event.message)
       }
     })
     socket.current = current
@@ -70,19 +72,19 @@ export function PlanChat({ project, disabled, onPlan, onOperation }) {
     setDraft('')
     setLastRequest(content)
     setError(null)
-    setOperation('Starting request...')
+    setOperation({ key: 'startingRequest' })
     onOperation?.(true)
     socket.current.send(JSON.stringify({ type: 'message', content, expected_version: project.version }))
   }
 
-  return <aside className="plan-chat" aria-label="Plan assistant">
-    <div className="chat-heading"><span className="ai-orb" aria-hidden="true">✦</span><div><h2>AI assistant</h2><p>Edits the plan with you</p></div><span className={`connection ${connection}`}>{connection}</span></div>
+  return <aside className="plan-chat" aria-label={t('planAssistant')}>
+    <div className="chat-heading"><span className="ai-orb" aria-hidden="true">✦</span><div><h2>{t('aiAssistant')}</h2><p>{t('editsPlan')}</p></div><span className={`connection ${connection}`}>{t(connection)}</span></div>
     <div className="transcript" aria-live="polite">
-      {messages.filter((message) => message.role !== 'system').map((message, index) => <article className={`chat-message ${message.role}`} key={message.id || `${message.role}-${index}`}><strong>{message.role === 'user' ? 'You' : 'GanttAI'}</strong><div className="chat-bubble"><p>{message.content}</p></div></article>)}
-      {!messages.some((message) => message.role !== 'system') && <p className="chat-empty">Ask for bulk changes, such as moving a milestone, reassigning work, or changing dependencies.</p>}
+      {messages.filter((message) => message.role !== 'system').map((message, index) => <article className={`chat-message ${message.role}`} key={message.id || `${message.role}-${index}`}><strong>{message.role === 'user' ? t('you') : 'GanttAI'}</strong><div className="chat-bubble"><p>{message.content}</p></div></article>)}
+      {!messages.some((message) => message.role !== 'system') && <p className="chat-empty">{t('chatEmpty')}</p>}
     </div>
-    {operation && <div className="chat-operation" role="status"><span className="spinner" />{operation}<button type="button" onClick={() => socket.current?.send(JSON.stringify({ type: 'cancel' }))}>Cancel</button></div>}
-    {error && <div className="chat-error" role="alert">{error} <button type="button" onClick={() => { setError(null); setDraft(lastRequest); if (connection === 'disconnected') setRetry((value) => value + 1) }}>Retry</button></div>}
-    <form className="chat-composer" onSubmit={send}><label htmlFor="plan-request">Request a plan change</label><div className="composer-box"><textarea id="plan-request" rows="3" value={draft} disabled={disabled || Boolean(operation) || connection !== 'connected'} onChange={(event) => setDraft(event.target.value)} placeholder="Move QA after launch prep and assign it to Maya" /><div><span>Changes create a new plan version</span><button type="submit" disabled={!draft.trim() || disabled || Boolean(operation) || connection !== 'connected'} aria-label="Send request">↑</button></div></div></form>
+    {operation && <div className="chat-operation" role="status"><span className="spinner" />{operation.key ? t(operation.key) : operation}<button type="button" onClick={() => socket.current?.send(JSON.stringify({ type: 'cancel' }))}>{t('cancel')}</button></div>}
+    {error && <div className="chat-error" role="alert">{error.key ? t(error.key) : error} <button type="button" onClick={() => { setError(null); setDraft(lastRequest); if (connection === 'disconnected') setRetry((value) => value + 1) }}>{t('retry')}</button></div>}
+    <form className="chat-composer" onSubmit={send}><label htmlFor="plan-request">{t('requestChange')}</label><div className="composer-box"><textarea id="plan-request" rows="3" value={draft} disabled={disabled || Boolean(operation) || connection !== 'connected'} onChange={(event) => setDraft(event.target.value)} placeholder={t('requestPlaceholder')} /><div><span>{t('newVersionHint')}</span><button type="submit" disabled={!draft.trim() || disabled || Boolean(operation) || connection !== 'connected'} aria-label={t('sendRequest')}>↑</button></div></div></form>
   </aside>
 }

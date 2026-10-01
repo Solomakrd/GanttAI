@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
+import { useI18n } from '../i18n'
 
 const STEP = 8
 const LARGE_STEP = 24
 
 export function ResizeHandle({ label, value, min, max, onChange, onReset, direction = 1, className = '' }) {
+  const { t } = useI18n()
   const drag = useRef(null)
   const onChangeRef = useRef(onChange)
   const [dragging, setDragging] = useState(false)
@@ -57,7 +59,7 @@ export function ResizeHandle({ label, value, min, max, onChange, onReset, direct
     aria-valuemax={max}
     aria-valuenow={value}
     tabIndex="0"
-    title="Drag or use arrow keys to resize. Double-click, Enter, or Space to reset."
+    title={t('resizeHelp')}
     onKeyDown={keyDown}
     onDoubleClick={onReset}
     onPointerDown={(event) => {

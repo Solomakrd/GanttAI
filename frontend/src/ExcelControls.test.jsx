@@ -55,7 +55,7 @@ describe('Excel exchange controls', () => {
     expect(options.body.get('file')).toBe(file)
     expect(options.body.get('start_date')).toBe('2026-10-02')
     resolve({ ok: true, json: async () => ({ tasks: [task] }) })
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Imported 1 tasks'))
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Imported 1 task'))
     expect(onImport).toHaveBeenCalledWith([task])
     expect(screen.getByRole('button', { name: 'Export Excel' })).toBeEnabled()
     await waitFor(() => expect(screen.getByRole('button', { name: 'Import' })).toHaveFocus())
@@ -77,7 +77,7 @@ describe('Excel exchange controls', () => {
     expect(screen.getByLabelText('Project start date')).toHaveValue('')
     selectDate()
     await user.click(screen.getByRole('button', { name: 'Import plan' }))
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Imported 1 tasks'))
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Imported 1 task'))
     await user.upload(input, file)
     expect(screen.getByLabelText('Project start date')).toBeInTheDocument()
     expect(fetch).toHaveBeenCalledTimes(2)
@@ -92,7 +92,7 @@ describe('Excel exchange controls', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Check your connection')
     expect(screen.getByRole('button', { name: 'Import plan' })).toBeEnabled()
     fireEvent.click(screen.getByRole('button', { name: 'Import plan' }))
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Imported 1 tasks'))
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Imported 1 task'))
   })
 
   it('rejects a partially invalid API response atomically', async () => {

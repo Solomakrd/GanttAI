@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { exportPlan, importProjectPlan } from '../api'
+import { errorDescriptor, useI18n } from '../i18n'
 
 export function ExcelControls({ tasks, project, disabled, onImport, onOperation }) {
+  const { t } = useI18n()
   const [dialogOpen, setDialogOpen] = useState(false)
   const [file, setFile] = useState(null)
   const [startDate, setStartDate] = useState('')
@@ -59,16 +61,16 @@ export function ExcelControls({ tasks, project, disabled, onImport, onOperation 
         onImport(project?.projectId ? imported : imported.tasks)
         clearSelection()
         const count = imported.tasks.length
-        setFeedback({ message: `Imported ${count} tasks. The project is saved and available after reload.` })
+        setFeedback({ key: 'importedTasks', values: { count } })
         setDialogOpen(false)
         setTimeout(() => importTrigger.current?.focus(), 0)
       } else {
         await exportPlan(tasks, controller.signal)
         if (controller.signal.aborted) return
-        setFeedback({ message: 'Workbook download started.' })
+        setFeedback({ key: 'downloadStarted' })
       }
     } catch (error) {
-      if (!controller.signal.aborted) setFeedback({ error: true, message: error.message || 'Workbook operation failed. Please retry.' })
+      if (!controller.signal.aborted) setFeedback({ error: true, ...errorDescriptor(error, 'workbookFailed') })
     } finally {
       activeRequest.current = null
       onOperation?.(false)
@@ -77,15 +79,15 @@ export function ExcelControls({ tasks, project, disabled, onImport, onOperation 
   }
 
   const busy = disabled || Boolean(operation)
-  return <div className="excel-controls" aria-label="Excel exchange" aria-busy={Boolean(operation)}>
-    <button ref={importTrigger} type="button" aria-label="Import" disabled={busy} onClick={() => { setFeedback(null); setDialogOpen(true) }}><span aria-hidden="true">↑</span><span>Import</span></button>
-    <button type="button" className="export-button" aria-label={operation === 'export' ? 'Exporting…' : 'Export Excel'} disabled={busy} onClick={() => run('export')}><span aria-hidden="true">↓</span><span>{operation === 'export' ? 'Exporting…' : 'Export Excel'}</span></button>
+  return <div className="excel-controls" aria-label={t('excelExchange')} aria-busy={Boolean(operation)}>
+    <button ref={importTrigger} type="button" aria-label={t('import')} disabled={busy} onClick={() => { setFeedback(null); setDialogOpen(true) }}><span aria-hidden="true">↑</span><span>{t('import')}</span></button>
+    <button type="button" className="export-button" aria-label={t(operation === 'export' ? 'exporting' : 'exportExcel')} disabled={busy} onClick={() => run('export')}><span aria-hidden="true">↓</span><span>{t(operation === 'export' ? 'exporting' : 'exportExcel')}</span></button>
     <div className={`modal-backdrop import-backdrop${dialogOpen ? ' open' : ''}`} aria-hidden={!dialogOpen} onMouseDown={(event) => { if (event.target === event.currentTarget) closeDialog() }}>
       <section ref={importDialog} className="import-modal" role="dialog" aria-modal="true" aria-labelledby="import-title">
-        <div className="modal-heading"><div><span className="eyebrow">Import data</span><h2 id="import-title">Load a plan from Excel</h2></div><button ref={modalClose} type="button" className="modal-close" aria-label="Close import dialog" aria-disabled={Boolean(operation)} onClick={closeDialog}>&times;</button></div>
-        <div className="import-body"><p>Choose the first worksheet in an Excel workbook. The plan changes only after the file passes validation.</p>
-    <label className="upload-zone" htmlFor="excel-file"><span className="upload-icon" aria-hidden="true">↑</span><strong>Choose an .xlsx workbook</strong><span>Excel workbook · up to 2 MiB</span></label>
-    <input ref={fileInput} id="excel-file" className="file-input" type="file" accept=".xlsx" disabled={busy} aria-label="Import workbook (.xlsx)" aria-describedby="excel-help" onChange={(event) => {
+        <div className="modal-heading"><div><span className="eyebrow">{t('importData')}</span><h2 id="import-title">{t('loadExcel')}</h2></div><button ref={modalClose} type="button" className="modal-close" aria-label={t('closeImport')} aria-disabled={Boolean(operation)} onClick={closeDialog}>&times;</button></div>
+        <div className="import-body"><p>{t('importIntro')}</p>
+    <label className="upload-zone" htmlFor="excel-file"><span className="upload-icon" aria-hidden="true">↑</span><strong>{t('chooseWorkbook')}</strong><span>{t('workbookLimit')}</span></label>
+    <input ref={fileInput} id="excel-file" className="file-input" type="file" accept=".xlsx" disabled={busy} aria-label={t('importWorkbook')} aria-describedby="excel-help" onChange={(event) => {
       const selected = event.target.files?.[0]
       event.target.value = '' // Permit the same file to be selected again after correction.
       if (!selected) return
@@ -93,22 +95,22 @@ export function ExcelControls({ tasks, project, disabled, onImport, onOperation 
       setStartDate('')
       if (!selected.name.toLowerCase().endsWith('.xlsx') || selected.size > 2 * 1024 * 1024) {
         setFile(null)
-        setFeedback({ error: true, message: 'Choose an .xlsx workbook no larger than 2 MiB.' })
+        setFeedback({ error: true, key: 'invalidWorkbook' })
       } else setFile(selected)
     }} />
-    <p id="excel-help" className="schema-note">Expected columns: задача, описание, исполнитель, длительность, предшественники. Import creates a saved plan version only after validation.</p>
+    <p id="excel-help" className="schema-note">{t('expectedColumns')}</p>
     {file && <form onSubmit={(event) => { event.preventDefault(); run('import') }}>
-      <p className="selected-file">Selected: <strong>{file.name}</strong></p>
-      <label htmlFor="project-start">Project start date</label>
+      <p className="selected-file">{t('selected')} <strong>{file.name}</strong></p>
+      <label htmlFor="project-start">{t('projectStart')}</label>
       <input id="project-start" type="date" required min="0001-01-01" max="9999-12-31" value={startDate} disabled={busy} aria-describedby="date-help" onChange={(event) => setStartDate(event.target.value)} />
-      <p id="date-help">Choose a date for tasks without dates. All calendar days count, including weekends and holidays. Supplied start_date and end_date values are validated and preserved, not rescheduled using this choice.</p>
-      <div className="excel-actions"><button type="button" disabled={busy} onClick={() => { clearSelection(); setFeedback(null) }}>Clear</button><button type="submit" disabled={busy || !startDate}>{operation === 'import' ? 'Importing…' : 'Import plan'}</button></div>
+      <p id="date-help">{t('dateHelp')}</p>
+      <div className="excel-actions"><button type="button" disabled={busy} onClick={() => { clearSelection(); setFeedback(null) }}>{t('clear')}</button><button type="submit" disabled={busy || !startDate}>{t(operation === 'import' ? 'importing' : 'importPlan')}</button></div>
     </form>}
-    {operation && <p role="status">{operation === 'import' ? 'Validating workbook…' : 'Preparing workbook…'}</p>}
+    {operation && <p role="status">{t(operation === 'import' ? 'validatingWorkbook' : 'preparingWorkbook')}</p>}
         </div>
-        <div className="modal-actions"><button type="button" disabled={busy} onClick={() => { clearSelection(); setFeedback(null); closeDialog() }}>Cancel</button></div>
+        <div className="modal-actions"><button type="button" disabled={busy} onClick={() => { clearSelection(); setFeedback(null); closeDialog() }}>{t('cancel')}</button></div>
       </section>
     </div>
-    {feedback && <p className={`excel-feedback ${feedback.error ? 'excel-error' : 'excel-success'}`} role={feedback.error ? 'alert' : 'status'}>{feedback.message}</p>}
+    {feedback && <p className={`excel-feedback ${feedback.error ? 'excel-error' : 'excel-success'}`} role={feedback.error ? 'alert' : 'status'}>{feedback.key ? t(feedback.key, feedback.values) : feedback.message}</p>}
   </div>
 }

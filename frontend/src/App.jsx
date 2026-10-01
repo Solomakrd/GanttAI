@@ -5,6 +5,7 @@ import { ExcelControls } from './components/ExcelControls'
 import { PlanChat } from './components/PlanChat'
 import { ResizeHandle } from './components/ResizeHandle'
 import { TaskDetailsModal } from './components/TaskDetailsModal'
+import { errorDescriptor, useI18n } from './i18n'
 import './styles.css'
 
 const initialState = { status: 'loading', tasks: [], rejectedIds: [], messages: [], workspaceProjects: [], projectId: null, conversationId: null, version: 0, token: null, error: null }
@@ -50,6 +51,7 @@ function loadWidths(viewport) {
 }
 
 export default function App() {
+  const { locale, setLocale, t } = useI18n()
   const [viewport, setViewport] = useState(() => window.innerWidth)
   const [widths, setWidths] = useState(() => loadWidths(window.innerWidth))
   const persistWidths = useRef(false)
@@ -117,7 +119,7 @@ export default function App() {
     setSelectedTaskId(null)
     setState((current) => {
       if (result.version !== current.version + 1) {
-        setNotice('A newer plan is already active. The stale chat result was ignored; reload before retrying.')
+        setNotice({ key: 'staleChat' })
         return current
       }
       return { ...current, tasks: result.tasks, version: result.version }
@@ -135,7 +137,7 @@ export default function App() {
       setState((current) => ({ status: 'ready', ...project,
         workspaceProjects: [...current.workspaceProjects, { projectId: project.projectId, version: project.version }], error: null }))
     } catch (error) {
-      setNotice(error.message)
+      setNotice(errorDescriptor(error, 'operationFailed'))
     } finally {
       setAppBusy(false)
     }
@@ -151,7 +153,7 @@ export default function App() {
       setImported(false)
       setState((current) => ({ status: 'ready', ...project, workspaceProjects: current.workspaceProjects, error: null }))
     } catch (error) {
-      setNotice(error.message)
+      setNotice(errorDescriptor(error, 'operationFailed'))
     } finally {
       setAppBusy(false)
     }
@@ -168,7 +170,7 @@ export default function App() {
         workspaceProjects: current.workspaceProjects.map((item) => item.projectId === project.projectId ? { ...item, version: project.version } : item),
         status: 'ready', error: null }))
     } catch (error) {
-      setNotice(error.message)
+      setNotice(errorDescriptor(error, 'operationFailed'))
     } finally {
       setAppBusy(false)
     }
@@ -180,7 +182,9 @@ export default function App() {
     try {
       const result = await updateProjectTask(project, selectedTaskId, values)
       if (state.projectId !== project.projectId || state.version !== project.version || result.version !== project.version + 1) {
-        throw new Error('A newer plan is already active. The task result was ignored; reload before retrying.')
+        const error = new Error(t('staleTask'))
+        error.translationKey = 'staleTask'
+        throw error
       }
       setState((current) => ({ ...current, ...result, token: current.token,
         workspaceProjects: current.workspaceProjects.map((item) => item.projectId === result.projectId ? { ...item, version: result.version } : item),
@@ -193,7 +197,8 @@ export default function App() {
 
   const selectedTask = state.tasks.find((task) => task.id === selectedTaskId)
   const activeProjectIndex = Math.max(0, state.workspaceProjects.findIndex((project) => project.projectId === state.projectId))
-  const projectLabel = `Project ${activeProjectIndex + 1}`
+  const projectLabel = t('project', { number: activeProjectIndex + 1 })
+  const loadError = errorDescriptor(state.error, 'loadFailedHelp')
 
   useEffect(() => {
     if (selectedTaskId && !selectedTask) setSelectedTaskId(null)
@@ -201,40 +206,41 @@ export default function App() {
 
   return <main className="app-shell">
     <header className="topbar">
-      <a className="brand" href="/" aria-label="GanttAI home"><span className="brand-mark" aria-hidden="true" /><span className="brand-name">GanttAI</span></a>
+      <a className="brand" href="/" aria-label={t('home')}><span className="brand-mark" aria-hidden="true" /><span className="brand-name">GanttAI</span></a>
       <div className="project-switcher">
-        <label htmlFor="active-project">Active project</label>
-        <select id="active-project" aria-label="Active project" value={state.projectId || ''} disabled={busy || !state.projectId} onChange={(event) => switchProject(event.target.value)}>{state.workspaceProjects.map((project, index) => <option key={project.projectId} value={project.projectId}>Project {index + 1}</option>)}</select>
+        <label htmlFor="active-project">{t('activeProject')}</label>
+        <select id="active-project" aria-label={t('activeProject')} value={state.projectId || ''} disabled={busy || !state.projectId} onChange={(event) => switchProject(event.target.value)}>{state.workspaceProjects.map((project, index) => <option key={project.projectId} value={project.projectId}>{t('project', { number: index + 1 })}</option>)}</select>
       </div>
       <div className="topbar-actions">
-        {state.projectId && <button type="button" className="icon-action" disabled={busy || state.version <= 1} onClick={undo} aria-label="Undo">↶<span>Undo</span></button>}
-        <button type="button" aria-label="New project" disabled={busy || state.status === 'loading'} onClick={startNewProject}><span aria-hidden="true">＋</span><span>New project</span></button>
+        <label className="language-control"><span>{t('language')}</span><select aria-label={t('language')} value={locale} onChange={(event) => setLocale(event.target.value)}><option value="ru">RU</option><option value="en">EN</option></select></label>
+        {state.projectId && <button type="button" className="icon-action" disabled={busy || state.version <= 1} onClick={undo} aria-label={t('undo')}>↶<span>{t('undo')}</span></button>}
+        <button type="button" aria-label={t('newProject')} disabled={busy || state.status === 'loading'} onClick={startNewProject}><span aria-hidden="true">＋</span><span>{t('newProject')}</span></button>
         <ExcelControls tasks={state.tasks} project={state} disabled={state.status !== 'ready' || busy} onOperation={setExcelBusy} onImport={(result) => {
           setImported(true)
           setSelectedTaskId(null)
           if (Array.isArray(result)) setState((current) => ({ ...current, tasks: result }))
           else setState((current) => ({ ...current, ...result, token: current.token, workspaceProjects: current.workspaceProjects.map((item) => item.projectId === result.projectId ? { ...item, version: result.version } : item), status: 'ready', error: null }))
         }} />
-        <div className="workspace-state"><span className="status-dot" />{imported ? 'Imported workspace' : 'Saved workspace'}<span className="avatar" aria-hidden="true">GA</span></div>
+        <div className="workspace-state"><span className="status-dot" />{t(imported ? 'importedWorkspace' : 'savedWorkspace')}<span className="avatar" aria-hidden="true">GA</span></div>
       </div>
     </header>
-    <nav className="mobile-tabs" aria-label="Workspace surfaces" role="tablist">
-      <button id="plan-tab" type="button" role="tab" aria-controls="plan-panel" aria-selected={mobileSurface === 'plan'} tabIndex={mobileSurface === 'plan' ? 0 : -1} onClick={() => setMobileSurface('plan')}>Plan</button>
-      <button id="assistant-tab" type="button" role="tab" aria-controls="assistant-panel" aria-selected={mobileSurface === 'ai'} tabIndex={mobileSurface === 'ai' ? 0 : -1} onClick={() => setMobileSurface('ai')}>AI assistant</button>
+    <nav className="mobile-tabs" aria-label={t('workspaceSurfaces')} role="tablist">
+      <button id="plan-tab" type="button" role="tab" aria-controls="plan-panel" aria-selected={mobileSurface === 'plan'} tabIndex={mobileSurface === 'plan' ? 0 : -1} onClick={() => setMobileSurface('plan')}>{t('plan')}</button>
+      <button id="assistant-tab" type="button" role="tab" aria-controls="assistant-panel" aria-selected={mobileSurface === 'ai'} tabIndex={mobileSurface === 'ai' ? 0 : -1} onClick={() => setMobileSurface('ai')}>{t('aiAssistant')}</button>
     </nav>
     <div className={`workspace-frame mobile-${mobileSurface}`} style={!mobile ? { '--assistant': `${effectiveWidths.assistant}px` } : undefined}>
       <section id="plan-panel" className="plan-surface" role="tabpanel" aria-labelledby="plan-tab">
-        <div className="workspace-heading"><div><span className="eyebrow">Planning workspace</span><h1>{projectLabel}</h1><p>{state.tasks.length} task{state.tasks.length === 1 ? '' : 's'} · version {state.version}</p></div><span className="save-state"><i />{imported ? 'Import saved' : 'Workspace saved'}</span></div>
-        {state.status === 'loading' && <div className="message loading-message" role="status"><span className="spinner" />Loading your plan...</div>}
-        {state.status === 'error' && <div className="message error-message" role="alert"><div><strong>We could not load the plan.</strong><span>Check that the API and database are running, then try again.</span></div><button type="button" onClick={loadPlan}>Retry</button></div>}
+        <div className="workspace-heading"><div><span className="eyebrow">{t('planningWorkspace')}</span><h1>{projectLabel}</h1><p>{t('taskVersion', { count: state.tasks.length, version: state.version })}</p></div><span className="save-state"><i />{t(imported ? 'importSaved' : 'workspaceSaved')}</span></div>
+        {state.status === 'loading' && <div className="message loading-message" role="status"><span className="spinner" />{t('loadingPlan')}</div>}
+        {state.status === 'error' && <div className="message error-message" role="alert"><div><strong>{t('loadFailed')}</strong><span>{loadError.key ? t(loadError.key, loadError.values) : loadError.message}</span></div><button type="button" onClick={loadPlan}>{t('retry')}</button></div>}
         {state.status === 'ready' && <GanttChart tasks={state.tasks} disabled={busy} onSelectTask={state.projectId ? setSelectedTaskId : undefined} widths={effectiveWidths} taskTableMax={taskTableMax} mobile={mobile} onWidthChange={setWidth} onWidthReset={resetWidth} />}
       </section>
-      {!mobile && <ResizeHandle className="workspace-resize" label="Plan and AI assistant boundary" value={effectiveWidths.assistant} min={WIDTH_LIMITS.assistant[0]} max={assistantMax} direction={-1} onChange={(value) => setWidth('assistant', value)} onReset={() => resetWidth('assistant')} />}
-      <div id="assistant-panel" className="assistant-surface" role="tabpanel" aria-labelledby="assistant-tab">{state.status === 'ready' && state.projectId ? <PlanChat project={state} disabled={busy} onOperation={setChatBusy} onPlan={acceptChatPlan} /> : <div className="assistant-placeholder"><span className="spinner" />Preparing assistant...</div>}</div>
+      {!mobile && <ResizeHandle className="workspace-resize" label={t('planAssistantBoundary')} value={effectiveWidths.assistant} min={WIDTH_LIMITS.assistant[0]} max={assistantMax} direction={-1} onChange={(value) => setWidth('assistant', value)} onReset={() => resetWidth('assistant')} />}
+      <div id="assistant-panel" className="assistant-surface" role="tabpanel" aria-labelledby="assistant-tab">{state.status === 'ready' && state.projectId ? <PlanChat project={state} disabled={busy} onOperation={setChatBusy} onPlan={acceptChatPlan} /> : <div className="assistant-placeholder"><span className="spinner" />{t('preparingAssistant')}</div>}</div>
     </div>
     {(notice || state.rejectedIds?.length > 0) && <div className="notice-stack">
-      {notice && <div className="app-notice" role="alert">{notice}</div>}
-      {state.rejectedIds?.length > 0 && <div className="app-notice" role="alert">{state.rejectedIds.length} invalid task record{state.rejectedIds.length > 1 ? 's were' : ' was'} excluded ({state.rejectedIds.join(', ')}).</div>}
+      {notice && <div className="app-notice" role="alert">{notice.key ? t(notice.key, notice.values) : notice.message}</div>}
+      {state.rejectedIds?.length > 0 && <div className="app-notice" role="alert">{t('rejectedTasks', { count: state.rejectedIds.length, ids: state.rejectedIds.join(', ') })}</div>}
     </div>}
     {selectedTask && <TaskDetailsModal task={selectedTask} tasks={state.tasks} disabled={busy} onClose={() => setSelectedTaskId(null)} onSave={saveTask} />}
   </main>
