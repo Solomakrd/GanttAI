@@ -10,3 +10,9 @@
 - source_plan: plan-task-details-modal.md
   summary: Delivered the deferred editable task-details modal requirement.
   evidence: Added direct task inspection and atomic versioned editing from task labels and bars.
+- source_plan: none
+  summary: Automatically reconnect the chat after a WebSocket connection loss.
+  evidence: Deferred at the user's request so the chat keyboard behavior can be implemented and manually verified first.
+- source_plan: none
+  summary: Automatically retry the last failed chat request without duplicating its message.
+  evidence: Deferred at the user's request so fixes are delivered and manually verified in the stated order.

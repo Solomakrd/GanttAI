@@ -36,6 +36,24 @@ describe('plan chat', () => {
     expect(screen.getByText('Reassigned A.')).toBeInTheDocument()
   })
 
+  it('submits with Enter and keeps Shift+Enter for new lines', () => {
+    vi.stubGlobal('WebSocket', FakeSocket)
+    render(<PlanChat project={project} onPlan={vi.fn()} />)
+    const socket = FakeSocket.instances[0]
+    act(() => socket.emit('message', { data: JSON.stringify({ type: 'connected', version: 1 }) }))
+    const composer = screen.getByLabelText('Request a plan change')
+
+    fireEvent.change(composer, { target: { value: 'First line\nSecond line' } })
+    expect(fireEvent.keyDown(composer, { key: 'Enter', shiftKey: true })).toBe(true)
+    expect(fireEvent.keyDown(composer, { key: 'Enter', isComposing: true })).toBe(true)
+    expect(socket.send).toHaveBeenCalledTimes(0)
+    expect(composer).toHaveValue('First line\nSecond line')
+
+    expect(fireEvent.keyDown(composer, { key: 'Enter' })).toBe(false)
+    expect(JSON.parse(socket.send.mock.calls[0][0])).toEqual({ type: 'message', content: 'First line\nSecond line', expected_version: 1 })
+    expect(composer).toHaveValue('')
+  })
+
   it('keeps the plan on malformed, failed, and cancelled responses and offers retry', () => {
     vi.stubGlobal('WebSocket', FakeSocket)
     const onPlan = vi.fn()
