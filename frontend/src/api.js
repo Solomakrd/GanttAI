@@ -1,4 +1,4 @@
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+const API_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '')
 
 function clientError(message, translationKey, translationValues) {
   const error = new Error(message)
@@ -227,7 +227,9 @@ export async function importProjectPlan(project, file, startDate, signal) {
 }
 
 export function connectPlanChat(project, onEvent) {
-  const wsUrl = API_URL.replace(/^http/, 'ws')
+  const wsUrl = API_URL
+    ? API_URL.replace(/^http/, 'ws')
+    : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`
   const socket = new WebSocket(`${wsUrl}/api/projects/${project.projectId}/chat`)
   socket.addEventListener('open', () => socket.send(JSON.stringify({ type: 'auth', token: project.token })))
   socket.addEventListener('message', (event) => {

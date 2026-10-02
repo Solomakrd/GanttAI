@@ -1,6 +1,7 @@
 from datetime import date, timedelta
 import asyncio
 import json
+import os
 from typing import Annotated, Optional
 
 from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
@@ -8,9 +9,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 
 from .agent import AgentConfigurationError, OpenAIPlanAgent
-from .db import create_schema
+from .db import create_schema, get_engine
 from .excel import ExcelError, MAX_FILE_BYTES, read_workbook, write_workbook
 from .models import Plan, ProjectSnapshot, Task, WorkspaceSnapshot
 from .plan_service import PlanEditError, PlanEditor, validate_plan
@@ -108,22 +111,47 @@ def seeded_tasks() -> list[Task]:
     ]
 
 
+def cors_origin_values():
+    configured = os.getenv("CORS_ORIGINS")
+    if configured is None or (not configured.strip() and os.getenv("APP_ENV") != "production"):
+        configured = "http://localhost:5173,http://127.0.0.1:5173"
+    return [origin.strip() for origin in configured.split(",") if origin.strip()]
+
+
 app = FastAPI(title="GanttAI Plan API")
 app.add_middleware(ImportBodyLimit)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+cors_origins = cors_origin_values()
+if cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 
 def repository():
     if not hasattr(app.state, "repository"):
-        create_schema()
+        if os.getenv("APP_ENV") != "production":
+            create_schema()
         app.state.repository = ProjectRepository()
     return app.state.repository
+
+
+@app.get("/health/live")
+def liveness():
+    return {"status": "ok"}
+
+
+@app.get("/health/ready")
+def readiness():
+    try:
+        with get_engine().connect() as connection:
+            connection.execute(text("SELECT 1"))
+    except SQLAlchemyError:
+        return JSONResponse(status_code=503, content={"status": "unavailable"})
+    return {"status": "ready"}
 
 
 def workspace_token(value):

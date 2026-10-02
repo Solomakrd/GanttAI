@@ -1,0 +1,14 @@
+.git
+.env
+.env.*
+!.env.example
+_bmad
+_bmad-output
+backend/.venv
+frontend/node_modules
+frontend/dist
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.DS_Store
+*.log

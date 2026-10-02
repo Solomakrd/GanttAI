@@ -1,4 +1,4 @@
-fastapi==0.115.6
+fastapi==0.118.0
 httpx==0.28.1
 pytest==8.3.4
 uvicorn[standard]==0.34.0
@@ -6,6 +6,7 @@ openpyxl==3.1.5
 python-multipart==0.0.20
 defusedxml==0.7.1
 SQLAlchemy==2.0.43
+greenlet==3.2.4
 alembic==1.16.5
 psycopg[binary]==3.2.10
 openai==1.109.1

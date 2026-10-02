@@ -22,5 +22,7 @@ def session_factory():
 
 def create_schema():
     # Alembic is used in deployed environments; this keeps isolated test databases simple.
+    if os.getenv("APP_ENV") == "production":
+        raise RuntimeError("Schema creation is disabled in production; run Alembic migrations.")
     from . import repositories  # noqa: F401
     Base.metadata.create_all(get_engine())
