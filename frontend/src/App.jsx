@@ -293,7 +293,7 @@ export default function App() {
 
   return <main className="app-shell">
     <header className="topbar">
-      <a className="brand" href="/" aria-label={t('home')}><span className="brand-mark" aria-hidden="true" /><span className="brand-name">GanttAI</span></a>
+      <a className="brand" href="/" aria-label={t('home')}><img className="brand-logo" src="/ganttai-logo.png" alt="" /></a>
       <div className="project-switcher">
         <label htmlFor="active-project">{t('activeProject')}</label>
         <div><select id="active-project" aria-label={t('activeProject')} value={state.projectId || ''} disabled={busy || !state.projectId} onChange={(event) => switchProject(event.target.value)}>{state.workspaceProjects.map((project, index) => <option key={project.projectId} value={project.projectId}>{project.projectName || t('project', { number: index + 1 })}</option>)}</select>

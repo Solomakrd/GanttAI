@@ -19,6 +19,14 @@ beforeEach(() => { vi.restoreAllMocks(); localStorage.clear() })
 afterEach(() => { cleanup() })
 
 describe('plan view', () => {
+  it('uses the supplied image as the accessible home brand', async () => {
+    vi.spyOn(global, 'fetch').mockResolvedValue({ ok: true, json: async () => plan })
+    render(<App />)
+    await screen.findAllByText('First task')
+    const brand = screen.getByRole('link', { name: 'GanttAI home' })
+    expect(brand.querySelector('img')).toHaveAttribute('src', '/ganttai-logo.png')
+  })
+
   it('shows a loading state and then seeded tasks with a dependency', async () => {
     vi.spyOn(global, 'fetch').mockResolvedValue({ ok: true, json: async () => plan })
     render(<App />)
