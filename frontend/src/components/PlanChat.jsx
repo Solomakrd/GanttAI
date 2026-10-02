@@ -32,10 +32,8 @@ export function PlanChat({ project, disabled, onPlan, onOperation }) {
   const [operation, setOperation] = useState(null)
   const [error, setError] = useState(null)
   const [retry, setRetry] = useState(0)
+  const [lastRequest, setLastRequest] = useState('')
   const socket = useRef(null)
-  const pendingRequest = useRef(null)
-  const retryRequest = useRef(null)
-  const retryError = useRef(null)
   const version = useRef(project.version)
   version.current = project.version
 
@@ -57,99 +55,53 @@ export function PlanChat({ project, disabled, onPlan, onOperation }) {
         if (stopped || socket.current !== next) return
         if (event.type === 'connected') {
           reconnectAttempts = 0
-          const pending = pendingRequest.current
-          const validVersion = pending
-            ? event.version === pending.expected_version || event.version === pending.expected_version + 1
-            : event.version === version.current
-          if (!validVersion) {
-            pendingRequest.current = null
-            retryRequest.current = null
-            retryError.current = null
+          if (event.version !== version.current) {
             setConnection('disconnected')
-            setOperation(null)
-            onOperation?.(false)
             setError({ key: 'staleChat' })
             return
           }
           setConnection('connected')
-          setError(retryRequest.current ? retryError.current : null)
-          if (pending) next.send(JSON.stringify(pending))
+          setError(null)
         }
         if (event.type === 'disconnected') {
           socket.current = null
           setConnection('disconnected')
-          const terminal = [4401, 4408].includes(event.code)
-          if (terminal) {
-            pendingRequest.current = null
-            retryRequest.current = null
-            retryError.current = null
-            setOperation(null)
-            onOperation?.(false)
-            setError({ key: 'chatDisconnected' })
-          } else if (!pendingRequest.current && !retryRequest.current) {
-            setError({ key: 'chatDisconnected' })
-          }
-          if (!terminal) {
+          setOperation(null)
+          onOperation?.(false)
+          setError({ key: 'chatDisconnected' })
+          if (![4401, 4408].includes(event.code)) {
             const delay = Math.min(1000 * 2 ** reconnectAttempts, 30000)
             reconnectAttempts += 1
             reconnectTimer = setTimeout(connect, delay)
           }
         }
-        const correlated = ['status', 'tool', 'complete', 'clarification', 'cancelled'].includes(event.type) || (event.type === 'error' && event.code !== 'network' && event.code !== 'protocol') || (event.type === 'error' && event.code === 'protocol' && event.request_id)
-        const pending = pendingRequest.current
-        if (correlated && (!pending || event.request_id !== pending.request_id)) return
-        if (event.type === 'error' && event.code === 'protocol' && !event.request_id && pending) {
-          next.close()
-          return
-        }
         if (event.type === 'status' || event.type === 'tool') setOperation(event)
         if (event.type === 'complete') {
-          if (event.version !== pending.expected_version + 1) {
-            pendingRequest.current = null
+          if (event.version !== version.current + 1) {
             setOperation(null)
             onOperation?.(false)
             setError({ key: 'staleChat' })
             return
           }
           setMessages((items) => [...items, { role: 'assistant', content: event.message }])
-          pendingRequest.current = null
-          retryRequest.current = null
-          retryError.current = null
           setOperation(null)
           onOperation?.(false)
           onPlan({ tasks: event.tasks, version: event.version })
         }
         if (event.type === 'clarification') {
-          if (event.version !== pending.expected_version) return
           setMessages((items) => [...items, { role: 'assistant', content: event.message }])
-          pendingRequest.current = null
-          retryRequest.current = null
-          retryError.current = null
           setOperation(null)
           onOperation?.(false)
         }
         if (event.type === 'cancelled') {
-          pendingRequest.current = null
-          retryRequest.current = null
-          retryError.current = null
           setOperation(null)
           onOperation?.(false)
           setError(event.message)
         }
         if (event.type === 'error') {
-          const eventError = event.code === 'protocol' ? { key: 'chatInvalid' } : event.code === 'network' ? { key: 'chatDisconnected' } : event.message
-          if (event.code === 'network' && retryRequest.current) {
-            setError(retryError.current)
-            return
-          }
-          if (event.code !== 'network') {
-            retryRequest.current = pending
-            retryError.current = eventError
-            pendingRequest.current = null
-          }
           setOperation(null)
-          if (!pendingRequest.current) onOperation?.(false)
-          setError(eventError)
+          onOperation?.(false)
+          setError(event.code === 'protocol' ? { key: 'chatInvalid' } : event.code === 'network' ? { key: 'chatDisconnected' } : event.message)
         }
       })
       current = next
@@ -157,52 +109,20 @@ export function PlanChat({ project, disabled, onPlan, onOperation }) {
     }
 
     connect()
-    return () => {
-      stopped = true
-      clearTimeout(reconnectTimer)
-      current?.close()
-      if (socket.current === current) socket.current = null
-      if (pendingRequest.current) {
-        pendingRequest.current = null
-        onOperation?.(false)
-      }
-      retryRequest.current = null
-      retryError.current = null
-    }
+    return () => { stopped = true; clearTimeout(reconnectTimer); current?.close(); if (socket.current === current) socket.current = null }
   }, [project.projectId, project.token, onPlan, onOperation, retry])
 
   const send = (event) => {
     event.preventDefault()
     const content = draft.trim()
     if (!content || disabled || operation || connection !== 'connected') return
-    const requestId = globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`
-    const request = { type: 'message', request_id: requestId, content, expected_version: project.version }
-    pendingRequest.current = request
-    retryRequest.current = null
-    retryError.current = null
-    setMessages((items) => [...items, { role: 'user', content, request_id: requestId }])
+    setMessages((items) => [...items, { role: 'user', content }])
     setDraft('')
+    setLastRequest(content)
     setError(null)
     setOperation({ key: 'startingRequest' })
     onOperation?.(true)
-    socket.current.send(JSON.stringify(request))
-  }
-
-  const retryFailed = () => {
-    const request = retryRequest.current
-    if (request && !disabled && !operation && connection === 'connected') {
-      retryRequest.current = null
-      retryError.current = null
-      pendingRequest.current = request
-      setError(null)
-      setOperation({ key: 'startingRequest' })
-      onOperation?.(true)
-      socket.current.send(JSON.stringify(request))
-      return
-    }
-    if (request) return
-    setError(null)
-    if (connection === 'disconnected') setRetry((value) => value + 1)
+    socket.current.send(JSON.stringify({ type: 'message', content, expected_version: project.version }))
   }
 
   return <aside className="plan-chat" aria-label={t('planAssistant')}>
@@ -211,8 +131,8 @@ export function PlanChat({ project, disabled, onPlan, onOperation }) {
       {messages.filter((message) => message.role !== 'system').map((message, index) => <article className={`chat-message ${message.role}`} key={message.id || `${message.role}-${index}`}><strong>{message.role === 'user' ? t('you') : 'GanttAI'}</strong><div className="chat-bubble"><p>{message.content}</p></div></article>)}
       {!messages.some((message) => message.role !== 'system') && <p className="chat-empty">{t('chatEmpty')}</p>}
     </div>
-    {operation && <div className="chat-operation" role="status"><span className="spinner" />{operationText(operation, t)}<button type="button" onClick={() => socket.current?.send(JSON.stringify({ type: 'cancel', request_id: pendingRequest.current?.request_id }))}>{t('cancel')}</button></div>}
-    {error && <div className="chat-error" role="alert">{error.key ? t(error.key) : error} <button type="button" onClick={retryFailed}>{t('retry')}</button></div>}
+    {operation && <div className="chat-operation" role="status"><span className="spinner" />{operationText(operation, t)}<button type="button" onClick={() => socket.current?.send(JSON.stringify({ type: 'cancel' }))}>{t('cancel')}</button></div>}
+    {error && <div className="chat-error" role="alert">{error.key ? t(error.key) : error} <button type="button" onClick={() => { setError(null); setDraft(lastRequest); if (connection === 'disconnected') setRetry((value) => value + 1) }}>{t('retry')}</button></div>}
     <form className="chat-composer" onSubmit={send}><label htmlFor="plan-request">{t('requestChange')}</label><div className="composer-box"><textarea id="plan-request" rows="3" value={draft} disabled={disabled || Boolean(operation) || connection !== 'connected'} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) send(event) }} placeholder={t('requestPlaceholder')} /><div><span>{t('newVersionHint')}</span><button type="submit" disabled={!draft.trim() || disabled || Boolean(operation) || connection !== 'connected'} aria-label={t('sendRequest')}>↑</button></div></div></form>
   </aside>
 }

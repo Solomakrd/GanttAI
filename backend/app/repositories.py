@@ -1,11 +1,10 @@
 import hashlib
 import secrets
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, select
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import JSON
 
@@ -61,35 +60,11 @@ class MessageRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
-class ChatRequestRecord(Base):
-    __tablename__ = "chat_requests"
-    __table_args__ = (UniqueConstraint("conversation_id", "request_id"),)
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    conversation_id: Mapped[str] = mapped_column(ForeignKey("conversations.id", ondelete="CASCADE"), index=True)
-    request_id: Mapped[str] = mapped_column(String(64), nullable=False)
-    content: Mapped[str] = mapped_column(Text, nullable=False)
-    expected_version: Mapped[int] = mapped_column(Integer, nullable=False)
-    status: Mapped[str] = mapped_column(String(16), nullable=False)
-    owner_token: Mapped[str | None] = mapped_column(String(36), nullable=True)
-    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    terminal_response: Mapped[dict | None] = mapped_column(JSON_TYPE, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-
-
 class VersionConflict(Exception):
     pass
 
 
 class AccessDenied(Exception):
-    pass
-
-
-class RequestCollision(Exception):
-    pass
-
-
-class RequestOwnershipLost(Exception):
     pass
 
 
@@ -156,155 +131,6 @@ class ProjectRepository:
                 raise AccessDenied()
             conversation_id = session.scalar(select(ConversationRecord.id).where(ConversationRecord.project_id == project_id))
             session.add(MessageRecord(conversation_id=conversation_id, role=role, content=content, kind=kind, created_at=datetime.now(timezone.utc)))
-
-    def claim_chat_request(self, project_id, token, request_id, content, expected_version, lease_seconds=30):
-        for attempt in range(2):
-            try:
-                return self._claim_chat_request_once(
-                    project_id, token, request_id, content, expected_version, lease_seconds,
-                )
-            except IntegrityError:
-                if attempt:
-                    raise
-
-    def _claim_chat_request_once(self, project_id, token, request_id, content, expected_version, lease_seconds):
-        now = datetime.now(timezone.utc)
-        with self.factory.begin() as session:
-            project = session.scalar(select(ProjectRecord).join(WorkspaceRecord).where(
-                ProjectRecord.id == project_id, WorkspaceRecord.token_hash == token_hash(token)).with_for_update())
-            if not project:
-                raise AccessDenied()
-            conversation_id = session.scalar(select(ConversationRecord.id).where(ConversationRecord.project_id == project_id))
-            request = session.scalar(select(ChatRequestRecord).where(
-                ChatRequestRecord.conversation_id == conversation_id,
-                ChatRequestRecord.request_id == request_id,
-            ).with_for_update())
-            if request:
-                if request.content != content or request.expected_version != expected_version:
-                    raise RequestCollision()
-                if request.status in {"completed", "cancelled"}:
-                    return request.status, request.terminal_response, None
-                lease_expires_at = request.lease_expires_at
-                if lease_expires_at and lease_expires_at.tzinfo is None:
-                    lease_expires_at = lease_expires_at.replace(tzinfo=timezone.utc)
-                if request.status == "processing" and lease_expires_at and lease_expires_at > now:
-                    return "processing", None, None
-            else:
-                request = ChatRequestRecord(
-                    conversation_id=conversation_id, request_id=request_id, content=content,
-                    expected_version=expected_version, status="pending", created_at=now, updated_at=now,
-                )
-                session.add(request)
-            owner_token = str(uuid.uuid4())
-            request.status = "processing"
-            request.owner_token = owner_token
-            request.lease_expires_at = now + timedelta(seconds=lease_seconds)
-            request.updated_at = now
-            return "claimed", None, owner_token
-
-    def renew_chat_request(self, project_id, request_id, owner_token, lease_seconds=30):
-        now = datetime.now(timezone.utc)
-        with self.factory.begin() as session:
-            request = session.scalar(select(ChatRequestRecord).join(ConversationRecord).where(
-                ConversationRecord.project_id == project_id,
-                ChatRequestRecord.request_id == request_id,
-            ).with_for_update())
-            if not request or request.status != "processing" or request.owner_token != owner_token:
-                return False
-            lease_expires_at = request.lease_expires_at
-            if lease_expires_at and lease_expires_at.tzinfo is None:
-                lease_expires_at = lease_expires_at.replace(tzinfo=timezone.utc)
-            if not lease_expires_at or lease_expires_at <= now:
-                return False
-            request.lease_expires_at = now + timedelta(seconds=lease_seconds)
-            request.updated_at = now
-            return True
-
-    def release_chat_request(self, project_id, request_id, owner_token):
-        with self.factory.begin() as session:
-            request = session.scalar(select(ChatRequestRecord).join(ConversationRecord).where(
-                ConversationRecord.project_id == project_id,
-                ChatRequestRecord.request_id == request_id,
-            ).with_for_update())
-            if request and request.status == "processing" and request.owner_token == owner_token:
-                request.status = "pending"
-                request.owner_token = None
-                request.lease_expires_at = None
-                request.updated_at = datetime.now(timezone.utc)
-
-    def cancel_chat_request(self, project_id, token, request_id):
-        now = datetime.now(timezone.utc)
-        with self.factory.begin() as session:
-            project = session.scalar(select(ProjectRecord).join(WorkspaceRecord).where(
-                ProjectRecord.id == project_id, WorkspaceRecord.token_hash == token_hash(token)).with_for_update())
-            if not project:
-                raise AccessDenied()
-            conversation_id = session.scalar(select(ConversationRecord.id).where(ConversationRecord.project_id == project_id))
-            request = session.scalar(select(ChatRequestRecord).where(
-                ChatRequestRecord.conversation_id == conversation_id,
-                ChatRequestRecord.request_id == request_id,
-            ).with_for_update())
-            if not request:
-                return None
-            if request.status in {"completed", "cancelled"}:
-                return request.terminal_response
-            terminal = {"type": "cancelled", "request_id": request_id,
-                        "message": "Request cancelled. The plan was not changed."}
-            request.status = "cancelled"
-            request.owner_token = None
-            request.lease_expires_at = None
-            request.terminal_response = terminal
-            request.updated_at = now
-            return terminal
-
-    def chat_request_terminal(self, project_id, request_id):
-        with self.factory() as session:
-            request = session.scalar(select(ChatRequestRecord).join(ConversationRecord).where(
-                ConversationRecord.project_id == project_id,
-                ChatRequestRecord.request_id == request_id,
-            ))
-            return request.terminal_response if request and request.status in {"completed", "cancelled"} else None
-
-    def finalize_chat_request(self, project_id, token, request_id, owner_token, plan, reply, changed):
-        now = datetime.now(timezone.utc)
-        with self.factory.begin() as session:
-            project = session.scalar(select(ProjectRecord).join(WorkspaceRecord).where(
-                ProjectRecord.id == project_id, WorkspaceRecord.token_hash == token_hash(token)).with_for_update())
-            if not project:
-                raise AccessDenied()
-            conversation_id = session.scalar(select(ConversationRecord.id).where(ConversationRecord.project_id == project_id))
-            request = session.scalar(select(ChatRequestRecord).where(
-                ChatRequestRecord.conversation_id == conversation_id,
-                ChatRequestRecord.request_id == request_id,
-            ).with_for_update())
-            if request.status in {"completed", "cancelled"}:
-                return request.terminal_response
-            if request.status != "processing" or request.owner_token != owner_token:
-                raise RequestOwnershipLost()
-            if project.current_version != request.expected_version:
-                raise VersionConflict()
-            if changed:
-                next_version = request.expected_version + 1
-                session.add(PlanVersionRecord(project_id=project_id, version=next_version,
-                                              plan=plan.model_dump(mode="json"), source="chat", created_at=now))
-                project.current_version = next_version
-                terminal = {"type": "complete", "request_id": request_id, "version": next_version,
-                            "plan": plan.model_dump(mode="json"), "message": reply}
-            else:
-                terminal = {"type": "clarification", "request_id": request_id,
-                            "version": request.expected_version, "message": reply}
-            session.add_all([
-                MessageRecord(conversation_id=conversation_id, role="user", content=request.content,
-                              kind="message", created_at=now),
-                MessageRecord(conversation_id=conversation_id, role="assistant", content=reply,
-                              kind="message", created_at=now),
-            ])
-            request.status = "completed"
-            request.owner_token = None
-            request.lease_expires_at = None
-            request.terminal_response = terminal
-            request.updated_at = now
-            return terminal
 
     def commit_plan(self, project_id, token, expected_version, plan: Plan, source, user_message=None, assistant_message=None, system_message=None):
         now = datetime.now(timezone.utc)

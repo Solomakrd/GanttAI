@@ -208,14 +208,12 @@ export function connectPlanChat(project, onEvent) {
   const socket = new WebSocket(`${wsUrl}/api/projects/${project.projectId}/chat`)
   socket.addEventListener('open', () => socket.send(JSON.stringify({ type: 'auth', token: project.token })))
   socket.addEventListener('message', (event) => {
-    let requestId
     try {
       const payload = JSON.parse(event.data)
-      requestId = payload?.request_id
       if (payload.type === 'complete') payload.tasks = parsePlan(payload.plan, true).tasks
       onEvent(payload)
     } catch {
-      onEvent({ type: 'error', request_id: requestId, code: 'protocol', message: 'The chat returned an invalid response. The current plan was kept.' })
+      onEvent({ type: 'error', code: 'protocol', message: 'The chat returned an invalid response. The current plan was kept.' })
     }
   })
   socket.addEventListener('close', (event) => onEvent({ type: 'disconnected', code: event?.code }))

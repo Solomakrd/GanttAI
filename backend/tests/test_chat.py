@@ -1,20 +1,19 @@
 import asyncio
 import io
-import threading
 from contextlib import contextmanager
 from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from openpyxl import Workbook
 
 from app.db import Base
 from app.agent import OpenAIPlanAgent
 from app.main import app, run_chat
-from app.repositories import ChatRequestRecord, ProjectRepository
+from app.repositories import ProjectRepository
 
 
 class EditingAgent:
@@ -39,27 +38,7 @@ class FailingAgent:
 
 class WaitingAgent:
     async def run(self, plan, message, history, status):
-        await status({"type": "status", "code": "planning"})
         await asyncio.sleep(30)
-
-
-class CountingEditingAgent(EditingAgent):
-    calls = 0
-
-    async def run(self, plan, message, history, status):
-        type(self).calls += 1
-        return await super().run(plan, message, history, status)
-
-
-class OverlappingEditingAgent(EditingAgent):
-    calls = 0
-    release = threading.Event()
-
-    async def run(self, plan, message, history, status):
-        type(self).calls += 1
-        await status({"type": "status", "code": "planning"})
-        await asyncio.to_thread(type(self).release.wait)
-        return await super().run(plan, message, history, status)
 
 
 @pytest.fixture
@@ -89,18 +68,14 @@ def open_chat(client, project):
     return connected()
 
 
-def request(content, expected_version=1, request_id="request-1"):
-    return {"type": "message", "request_id": request_id, "content": content, "expected_version": expected_version}
-
-
 def test_bulk_chat_streams_safe_tool_status_and_commits_one_version(client):
     project = create(client)
     with open_chat(client, project) as socket:
         assert socket.receive_json()["type"] == "connected"
-        socket.send_json(request("Reassign discovery"))
+        socket.send_json({"type": "message", "content": "Reassign discovery", "expected_version": 1})
         tool = socket.receive_json()
         complete = socket.receive_json()
-    assert tool == {"type": "tool", "tool": "update_task", "status": "running", "request_id": "request-1"}
+    assert tool == {"type": "tool", "tool": "update_task", "status": "running"}
     assert complete["type"] == "complete"
     assert complete["version"] == 2
     assert complete["plan"]["tasks"][0]["assignee"] == "Priya"
@@ -112,147 +87,41 @@ def test_clarification_persists_messages_without_changing_plan(client):
     app.state.agent_factory = ClarifyingAgent
     with open_chat(client, project) as socket:
         socket.receive_json()
-        socket.send_json(request("Move it"))
+        socket.send_json({"type": "message", "content": "Move it", "expected_version": 1})
         assert socket.receive_json()["type"] == "clarification"
     loaded = client.get("/api/workspace", headers={"X-Workspace-Token": project["workspace_token"]}).json()["active_project"]
     assert loaded["version"] == 1
     assert [item["role"] for item in loaded["messages"]][-2:] == ["user", "assistant"]
 
 
-@pytest.mark.parametrize("agent_factory,terminal_type", [(CountingEditingAgent, "complete"), (ClarifyingAgent, "clarification")])
-def test_duplicate_request_replays_one_terminal_result_and_one_message_pair(client, agent_factory, terminal_type):
-    project = create(client)
-    app.state.agent_factory = agent_factory
-    if agent_factory is CountingEditingAgent:
-        CountingEditingAgent.calls = 0
-    payload = request("same request", request_id=f"duplicate-{terminal_type}")
-    with open_chat(client, project) as socket:
-        socket.receive_json()
-        socket.send_json(payload)
-        while True:
-            first = socket.receive_json()
-            if first["type"] == terminal_type:
-                break
-    with open_chat(client, project) as socket:
-        socket.receive_json()
-        socket.send_json(payload)
-        replay = socket.receive_json()
-
-    assert replay == first
-    if agent_factory is CountingEditingAgent:
-        assert CountingEditingAgent.calls == 1
-    loaded = client.get(f"/api/projects/{project['project_id']}", headers={"X-Workspace-Token": project["workspace_token"]}).json()
-    assert [item["role"] for item in loaded["messages"]].count("user") == 1
-    assert [item["role"] for item in loaded["messages"]].count("assistant") == 1
-
-
-def test_overlapping_duplicate_request_waits_for_one_agent_and_replays_its_result(client):
-    project = create(client)
-    app.state.agent_factory = OverlappingEditingAgent
-    OverlappingEditingAgent.calls = 0
-    OverlappingEditingAgent.release.clear()
-    payload = request("overlapping request", request_id="overlap-1")
-
-    with open_chat(client, project) as first_socket, open_chat(client, project) as duplicate_socket:
-        first_socket.receive_json()
-        duplicate_socket.receive_json()
-        first_socket.send_json(payload)
-        assert first_socket.receive_json() == {"type": "status", "code": "planning", "request_id": "overlap-1"}
-        duplicate_socket.send_json(payload)
-        assert duplicate_socket.receive_json() == {"type": "status", "code": "recovering", "request_id": "overlap-1"}
-        assert OverlappingEditingAgent.calls == 1
-        OverlappingEditingAgent.release.set()
-        while (first := first_socket.receive_json())["type"] != "complete":
-            pass
-        while (duplicate := duplicate_socket.receive_json())["type"] != "complete":
-            pass
-
-    assert duplicate == first
-    assert OverlappingEditingAgent.calls == 1
-    loaded = client.get(f"/api/projects/{project['project_id']}", headers={"X-Workspace-Token": project["workspace_token"]}).json()
-    assert loaded["version"] == 2
-    assert [item["role"] for item in loaded["messages"]].count("user") == 1
-    assert [item["role"] for item in loaded["messages"]].count("assistant") == 1
-
-
-def test_duplicate_waiter_cancellation_durably_fences_the_actual_owner(client):
-    project = create(client)
-    app.state.agent_factory = OverlappingEditingAgent
-    OverlappingEditingAgent.calls = 0
-    OverlappingEditingAgent.release.clear()
-    payload = request("cancel overlapping request", request_id="cancel-overlap-1")
-
-    with open_chat(client, project) as owner_socket, open_chat(client, project) as waiter_socket:
-        owner_socket.receive_json()
-        waiter_socket.receive_json()
-        owner_socket.send_json(payload)
-        assert owner_socket.receive_json()["type"] == "status"
-        waiter_socket.send_json(payload)
-        assert waiter_socket.receive_json()["code"] == "recovering"
-        waiter_socket.send_json({"type": "cancel", "request_id": "cancel-overlap-1"})
-        cancelled = waiter_socket.receive_json()
-        assert cancelled["type"] == "cancelled"
-        OverlappingEditingAgent.release.set()
-        while (owner_result := owner_socket.receive_json())["type"] != "cancelled":
-            pass
-
-    assert owner_result == cancelled
-    assert OverlappingEditingAgent.calls == 1
-    loaded = client.get(f"/api/projects/{project['project_id']}", headers={"X-Workspace-Token": project["workspace_token"]}).json()
-    assert loaded["version"] == 1
-    assert not any(item["role"] in {"user", "assistant"} for item in loaded["messages"])
-    with app.state.repository.factory() as session:
-        record = session.scalar(select(ChatRequestRecord).where(ChatRequestRecord.request_id == "cancel-overlap-1"))
-        assert record.status == "cancelled"
-
-
-def test_duplicate_request_id_with_different_input_is_rejected(client):
-    project = create(client)
-    with open_chat(client, project) as socket:
-        socket.receive_json()
-        socket.send_json(request("first"))
-        while socket.receive_json()["type"] != "complete":
-            pass
-    with open_chat(client, project) as socket:
-        socket.receive_json()
-        socket.send_json(request("different"))
-        error = socket.receive_json()
-    assert error["code"] == "invalid_request"
-    assert error["request_id"] == "request-1"
-
-
 def test_stale_provider_failure_and_cancellation_preserve_plan(client):
     project = create(client)
     with open_chat(client, project) as socket:
         socket.receive_json()
-        socket.send_json(request("stale", 0))
+        socket.send_json({"type": "message", "content": "stale", "expected_version": 0})
         assert socket.receive_json()["code"] == "stale"
     app.state.agent_factory = FailingAgent
     with open_chat(client, project) as socket:
         socket.receive_json()
-        socket.send_json(request("fail", request_id="request-2"))
+        socket.send_json({"type": "message", "content": "fail", "expected_version": 1})
         error = socket.receive_json()
         assert error["code"] == "processing"
         assert "secret" not in error["message"]
     app.state.agent_factory = WaitingAgent
     with open_chat(client, project) as socket:
         socket.receive_json()
-        socket.send_json(request("wait", request_id="request-3"))
-        assert socket.receive_json()["type"] == "status"
-        socket.send_json({"type": "cancel", "request_id": "request-3"})
+        socket.send_json({"type": "message", "content": "wait", "expected_version": 1})
+        socket.send_json({"type": "cancel"})
         assert socket.receive_json()["type"] == "cancelled"
     loaded = client.get("/api/workspace", headers={"X-Workspace-Token": project["workspace_token"]}).json()["active_project"]
     assert loaded["version"] == 1
-    with app.state.repository.factory() as session:
-        cancelled = session.scalar(select(ChatRequestRecord).where(ChatRequestRecord.request_id == "request-3"))
-        assert cancelled.status == "cancelled"
 
 
 def test_excel_commit_cannot_overwrite_a_newer_version(client):
     project = create(client)
     with open_chat(client, project) as socket:
         socket.receive_json()
-        socket.send_json(request("edit"))
+        socket.send_json({"type": "message", "content": "edit", "expected_version": 1})
         while socket.receive_json()["type"] != "complete":
             pass
     workbook = Workbook()
@@ -409,7 +278,7 @@ def test_cancel_during_completion_reports_the_committed_plan(client):
 
     socket = CancellingSocket()
     committed = asyncio.run(run_chat(socket, project["project_id"], project["workspace_token"],
-                                     request("edit")))
+                                     {"content": "edit", "expected_version": 1}))
     assert committed
     assert socket.events[-1]["type"] == "complete"
     loaded = client.get("/api/workspace", headers={"X-Workspace-Token": project["workspace_token"]}).json()["active_project"]

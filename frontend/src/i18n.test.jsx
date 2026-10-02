@@ -12,8 +12,9 @@ const tasks = [
 
 class Socket {
   static instance
-  constructor() { this.listeners = {}; this.send = vi.fn(); Socket.instance = this }
+  constructor() { this.listeners = {}; Socket.instance = this }
   addEventListener(name, callback) { this.listeners[name] = callback }
+  send() {}
   close() {}
   emit(payload) { this.listeners.message?.({ data: JSON.stringify(payload) }) }
 }
@@ -81,10 +82,14 @@ describe('localization', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
     fireEvent.click(screen.getByRole('button', { name: 'Edit Customer text details' }))
     fireEvent.change(screen.getByLabelText('Task name'), { target: { value: 'Unsaved customer text' } })
+    act(() => Socket.instance.emit({ type: 'status', code: 'planning' }))
+    expect(screen.getByRole('status')).toHaveTextContent('Planning safe changes...')
     fireEvent.change(screen.getByLabelText('Language'), { target: { value: 'ru' } })
     expect(screen.getByRole('dialog')).toHaveAccessibleName('Изменить задачу')
     expect(screen.getByLabelText('Название задачи')).toHaveValue('Unsaved customer text')
     expect(screen.getByLabelText('Запрос на изменение плана')).toHaveValue('Unsaved chat draft')
+    expect(screen.getByRole('status')).toHaveTextContent('Планируем безопасные изменения...')
+    expect(screen.getByRole('status').querySelector('button')).toBeEnabled()
     expect(screen.getAllByText('Customer text').length).toBeGreaterThan(0)
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Проект 1')
     expect(container.querySelector('.chart-controls')).toHaveTextContent('125%')
@@ -98,11 +103,7 @@ describe('localization', () => {
     const project = { projectId: 'p1', token: 'token', version: 1, tasks, messages: [{ role: 'assistant', content: 'Backend free text' }] }
     render(<I18nProvider><PlanChat project={project} onPlan={vi.fn()} /></I18nProvider>)
     expect(screen.getByRole('complementary', { name: 'Ассистент планирования' })).toHaveTextContent('Backend free text')
-    act(() => Socket.instance.emit({ type: 'connected', version: 1 }))
-    fireEvent.change(screen.getByLabelText('Запрос на изменение плана'), { target: { value: 'Изменить задачу' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Отправить запрос' }))
-    const requestId = JSON.parse(Socket.instance.send.mock.calls[0][0]).request_id
-    act(() => Socket.instance.emit({ type: 'tool', request_id: requestId, tool: 'update_task', status: 'complete', task_count: 2 }))
+    act(() => Socket.instance.emit({ type: 'tool', tool: 'update_task', status: 'complete', task_count: 2 }))
     expect(screen.getByRole('status')).toHaveTextContent('Операция завершена: изменение задачи. Проверено 2 задачи.')
     expect(screen.getByRole('status')).not.toHaveTextContent('update_task')
   })
