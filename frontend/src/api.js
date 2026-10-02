@@ -102,10 +102,15 @@ async function request(path, options) {
         })
       }
     } catch (error) {
-      if (error.serverProvided) throw error
+      if (error.serverProvided) {
+        error.status = response.status
+        throw error
+      }
       // Keep the HTTP status if the server returned a non-JSON error.
     }
-    throw clientError(`Plan API returned ${response.status}. Please retry.`, 'apiStatus', { status: response.status })
+    const error = clientError(`Plan API returned ${response.status}. Please retry.`, 'apiStatus', { status: response.status })
+    error.status = response.status
+    throw error
   }
   return response
 }
@@ -131,10 +136,17 @@ function workspaceProject(record) {
 }
 
 export async function loadWorkspace(signal) {
-  const token = localStorage.getItem('ganttai.workspaceToken')
+  let token = localStorage.getItem('ganttai.workspaceToken')
   let response
   if (token) {
-    response = await request('/api/workspace', { signal, headers: { 'X-Workspace-Token': token } })
+    try {
+      response = await request('/api/workspace', { signal, headers: { 'X-Workspace-Token': token } })
+    } catch (error) {
+      if (error.status !== 404 || error.serverMessage !== 'Workspace not found.') throw error
+      localStorage.removeItem('ganttai.workspaceToken')
+      token = null
+      response = await request('/api/projects', { method: 'POST', signal })
+    }
   } else {
     response = await request('/api/projects', { method: 'POST', signal })
   }
@@ -147,9 +159,20 @@ export async function loadWorkspace(signal) {
 }
 
 export async function createProject(signal) {
-  const token = localStorage.getItem('ganttai.workspaceToken')
-  const response = await request('/api/projects', { method: 'POST', signal, headers: token ? { 'X-Workspace-Token': token } : {} })
+  let token = localStorage.getItem('ganttai.workspaceToken')
+  let workspaceReset = false
+  let response
+  try {
+    response = await request('/api/projects', { method: 'POST', signal, headers: token ? { 'X-Workspace-Token': token } : {} })
+  } catch (error) {
+    if (!token || error.status !== 404 || error.serverMessage !== 'Workspace not found.') throw error
+    localStorage.removeItem('ganttai.workspaceToken')
+    token = null
+    workspaceReset = true
+    response = await request('/api/projects', { method: 'POST', signal })
+  }
   const result = snapshot(await response.json())
+  result.workspaceReset = workspaceReset
   result.token = result.token || token
   if (result.token) localStorage.setItem('ganttai.workspaceToken', result.token)
   return result

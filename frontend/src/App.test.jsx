@@ -41,6 +41,23 @@ describe('plan view', () => {
     expect(alert).toHaveTextContent('Server workspace detail')
   })
 
+  it('replaces a stale workspace token while loading', async () => {
+    localStorage.setItem('ganttai.workspaceToken', 'stale-token')
+    const replacement = { project_id: 'p1', conversation_id: 'c1', workspace_token: 'fresh-token', version: 1, plan, messages: [] }
+    const fetch = vi.spyOn(global, 'fetch')
+      .mockResolvedValueOnce({ ok: false, status: 404, json: async () => ({ detail: 'Workspace not found.' }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => replacement })
+
+    render(<App />)
+
+    expect((await screen.findAllByText('First task')).length).toBeGreaterThan(0)
+    expect(fetch.mock.calls[0][0]).toContain('/api/workspace')
+    expect(fetch.mock.calls[0][1].headers).toEqual({ 'X-Workspace-Token': 'stale-token' })
+    expect(fetch.mock.calls[1][0]).toContain('/api/projects')
+    expect(fetch.mock.calls[1][1].headers).toBeUndefined()
+    expect(localStorage.getItem('ganttai.workspaceToken')).toBe('fresh-token')
+  })
+
   it('keeps an empty plan usable', async () => {
     vi.spyOn(global, 'fetch').mockResolvedValue({ ok: true, json: async () => ({ tasks: [] }) })
     render(<App />)
@@ -345,6 +362,27 @@ describe('plan view', () => {
     fireEvent.change(screen.getByLabelText('Active project'), { target: { value: 'p1' } })
     expect((await screen.findAllByText('First task')).length).toBeGreaterThan(0)
     expect(fetch.mock.calls[2][0]).toContain('/api/projects/p1')
+  })
+
+  it('replaces a stale workspace token while creating a project', async () => {
+    const first = { project_id: 'p1', conversation_id: 'c1', workspace_token: 'stale-token', version: 1, plan, messages: [] }
+    const second = { project_id: 'p2', conversation_id: 'c2', workspace_token: 'fresh-token', version: 1, plan, messages: [] }
+    const fetch = vi.spyOn(global, 'fetch')
+      .mockResolvedValueOnce({ ok: true, json: async () => first })
+      .mockResolvedValueOnce({ ok: false, status: 404, json: async () => ({ detail: 'Workspace not found.' }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => second })
+
+    render(<App />)
+    await screen.findAllByText('First task')
+    fireEvent.click(screen.getByRole('button', { name: 'New project' }))
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(3))
+    expect(fetch.mock.calls[1][1].headers).toEqual({ 'X-Workspace-Token': 'stale-token' })
+    expect(fetch.mock.calls[2][1].headers).toBeUndefined()
+    expect(localStorage.getItem('ganttai.workspaceToken')).toBe('fresh-token')
+    const projectSelect = screen.getByLabelText('Active project')
+    expect(projectSelect).toHaveValue('p2')
+    expect(projectSelect.querySelectorAll('option')).toHaveLength(1)
   })
 
   it('preserves workspace identity and project choices after undo', async () => {

@@ -135,7 +135,7 @@ export default function App() {
       setSelectedTaskId(null)
       setImported(false)
       setState((current) => ({ status: 'ready', ...project,
-        workspaceProjects: [...current.workspaceProjects, { projectId: project.projectId, version: project.version }], error: null }))
+        workspaceProjects: project.workspaceReset ? [{ projectId: project.projectId, version: project.version }] : [...current.workspaceProjects, { projectId: project.projectId, version: project.version }], error: null }))
     } catch (error) {
       setNotice(errorDescriptor(error, 'operationFailed'))
     } finally {
