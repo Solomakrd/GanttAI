@@ -37,6 +37,9 @@ def test_migrations_jsonb_and_optimistic_locking_on_postgresql():
         engine = create_engine(schema_url)
         columns = {column["name"]: column["type"] for column in inspect(engine).get_columns("plan_versions")}
         assert isinstance(columns["plan"], JSONB)
+        request_columns = {column["name"]: column["type"] for column in inspect(engine).get_columns("chat_requests")}
+        assert {"request_id", "content", "expected_version", "status", "owner_token", "lease_expires_at", "terminal_response"} <= request_columns.keys()
+        assert isinstance(request_columns["terminal_response"], JSONB)
 
         repository = ProjectRepository(sessionmaker(engine, expire_on_commit=False))
         token, project = repository.create(Plan(tasks=seeded_tasks()))

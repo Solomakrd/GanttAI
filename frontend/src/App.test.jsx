@@ -214,9 +214,8 @@ describe('plan view', () => {
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 820 })
     class Socket {
       static instance
-      constructor() { this.listeners = {}; Socket.instance = this }
+      constructor() { this.listeners = {}; this.send = vi.fn(); Socket.instance = this }
       addEventListener(name, callback) { this.listeners[name] = callback }
-      send() {}
       close() {}
       emit(payload) { this.listeners.message({ data: JSON.stringify(payload) }) }
     }
@@ -298,9 +297,8 @@ describe('plan view', () => {
   it('updates the chart from a versioned chat result and rejects a stale result', async () => {
     class Socket {
       static instance
-      constructor() { this.listeners = {}; Socket.instance = this }
+      constructor() { this.listeners = {}; this.send = vi.fn(); Socket.instance = this }
       addEventListener(name, callback) { this.listeners[name] = callback }
-      send() {}
       close() {}
       emit(payload) { this.listeners.message({ data: JSON.stringify(payload) }) }
     }
@@ -311,11 +309,14 @@ describe('plan view', () => {
     }) })
     render(<App />)
     await screen.findAllByText('First task')
+    act(() => Socket.instance.emit({ type: 'connected', version: 1 }))
+    fireEvent.change(screen.getByLabelText('Request a plan change'), { target: { value: 'Update first task' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send request' }))
+    const requestId = JSON.parse(Socket.instance.send.mock.calls[0][0]).request_id
     const updated = { ...plan.tasks[0], task: 'Updated by chat' }
-    act(() => Socket.instance.emit({ type: 'complete', version: 2, plan: { tasks: [updated, plan.tasks[1]] }, message: 'Updated.' }))
+    act(() => Socket.instance.emit({ type: 'complete', request_id: requestId, version: 2, plan: { tasks: [updated, plan.tasks[1]] }, message: 'Updated.' }))
     expect((await screen.findAllByText('Updated by chat')).length).toBeGreaterThan(0)
-    act(() => Socket.instance.emit({ type: 'complete', version: 4, plan: { tasks: [{ ...updated, task: 'Stale result' }, plan.tasks[1]] }, message: 'Stale.' }))
-    expect(screen.getByRole('alert')).toHaveTextContent('stale chat result was ignored')
+    act(() => Socket.instance.emit({ type: 'complete', request_id: requestId, version: 4, plan: { tasks: [{ ...updated, task: 'Stale result' }, plan.tasks[1]] }, message: 'Stale.' }))
     expect(screen.queryByText('Stale result')).not.toBeInTheDocument()
   })
 
@@ -451,9 +452,8 @@ describe('plan view', () => {
   it('closes a stale selection when chat replaces the plan', async () => {
     class Socket {
       static instance
-      constructor() { this.listeners = {}; Socket.instance = this }
+      constructor() { this.listeners = {}; this.send = vi.fn(); Socket.instance = this }
       addEventListener(name, callback) { this.listeners[name] = callback }
-      send() {}
       close() {}
       emit(payload) { this.listeners.message({ data: JSON.stringify(payload) }) }
     }
@@ -463,7 +463,11 @@ describe('plan view', () => {
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: 'Edit First task details' }))
     expect(screen.getByRole('dialog')).toBeInTheDocument()
-    act(() => Socket.instance.emit({ type: 'complete', version: 2, plan: { tasks: [{ ...plan.tasks[1], predecessors: [] }] }, message: 'Removed first task.' }))
+    act(() => Socket.instance.emit({ type: 'connected', version: 1 }))
+    fireEvent.change(screen.getByLabelText('Request a plan change'), { target: { value: 'Remove first task' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send request' }))
+    const requestId = JSON.parse(Socket.instance.send.mock.calls[0][0]).request_id
+    act(() => Socket.instance.emit({ type: 'complete', request_id: requestId, version: 2, plan: { tasks: [{ ...plan.tasks[1], predecessors: [] }] }, message: 'Removed first task.' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     expect(screen.queryByRole('button', { name: 'Edit First task details' })).not.toBeInTheDocument()
   })

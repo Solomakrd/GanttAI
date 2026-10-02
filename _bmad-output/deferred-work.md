@@ -19,3 +19,9 @@
 - source_plan: plan-chat-websocket-auto-reconnect.md
   summary: Delivered automatic chat WebSocket reconnection.
   evidence: Added bounded reconnect backoff, lifecycle guards, terminal authentication handling, and stale-version protection.
+- source_plan: none
+  summary: Remove a cancelled chat request from both persisted history and the composer.
+  evidence: Deferred at the user's request until automatic retry of the last interrupted request is implemented and manually verified.
+- source_plan: plan-chat-automatic-request-retry.md
+  summary: Delivered automatic idempotent retry of interrupted chat requests.
+  evidence: Added durable request IDs, fenced exactly-once persistence, cached terminal replay, automatic reconnect replay, and one-bubble retries.

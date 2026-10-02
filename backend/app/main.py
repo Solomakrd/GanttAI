@@ -1,6 +1,8 @@
 from datetime import date, timedelta
 import asyncio
+from contextlib import suppress
 import json
+import re
 from typing import Annotated, Optional
 
 from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
@@ -14,7 +16,7 @@ from .db import create_schema
 from .excel import ExcelError, MAX_FILE_BYTES, read_workbook, write_workbook
 from .models import Plan, ProjectSnapshot, Task, WorkspaceSnapshot
 from .plan_service import PlanEditError, PlanEditor, validate_plan
-from .repositories import AccessDenied, ProjectRepository, VersionConflict
+from .repositories import AccessDenied, ProjectRepository, RequestCollision, RequestOwnershipLost, VersionConflict
 
 
 class ImportBodyLimit:
@@ -265,48 +267,114 @@ def update_project_task(project_id: str, task_id: str, body: TaskUpdateRequest,
 
 
 async def run_chat(websocket, project_id, token, payload):
-    completion = None
+    terminal = None
+    owner_token = None
     expected_version = payload.get("expected_version")
     message = payload.get("content")
-    if not isinstance(expected_version, int) or not isinstance(message, str) or not message.strip() or len(message) > 10000:
-        await websocket.send_json({"type": "error", "code": "invalid_request", "message": "Send a non-empty message and the current plan version."})
+    request_id = payload.get("request_id")
+    valid_request_id = isinstance(request_id, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", request_id)
+    if not valid_request_id or not isinstance(expected_version, int) or not isinstance(message, str) or not message.strip() or len(message) > 10000:
+        await websocket.send_json({"type": "error", "request_id": request_id if valid_request_id else None,
+                                   "code": "invalid_request", "message": "Send a valid request ID, non-empty message, and current plan version."})
         return
+    message = message.strip()
+
+    async def send(event):
+        await websocket.send_json({**event, "request_id": request_id})
+
+    async def heartbeat():
+        while True:
+            await asyncio.sleep(10)
+            renewed = await asyncio.to_thread(repository().renew_chat_request, project_id, request_id, owner_token)
+            if not renewed:
+                raise RequestOwnershipLost()
+
+    async def release_request():
+        nonlocal owner_token
+        if owner_token:
+            current_owner = owner_token
+            owner_token = None
+            await asyncio.to_thread(repository().release_chat_request, project_id, request_id, current_owner)
+
     try:
+        while True:
+            claim, cached, owner_token = await asyncio.to_thread(
+                repository().claim_chat_request, project_id, token, request_id, message, expected_version,
+            )
+            if claim in {"completed", "cancelled"}:
+                await websocket.send_json(cached)
+                return True
+            if claim == "claimed":
+                break
+            await send({"type": "status", "code": "recovering"})
+            await asyncio.sleep(0.25)
         snapshot = await asyncio.to_thread(repository().load, project_id, token)
         if snapshot.version != expected_version:
-            await websocket.send_json({"type": "error", "code": "stale", "message": "The plan changed. Reload and retry."})
+            await send({"type": "error", "code": "stale", "message": "The plan changed. Reload and retry."})
             return
 
         async def status(event):
-            await websocket.send_json(event)
+            await send(event)
 
         agent_factory = getattr(app.state, "agent_factory", OpenAIPlanAgent)
         agent = agent_factory()
-        candidate, reply, changed = await agent.run(snapshot.plan, message.strip(), snapshot.messages, status)
+        agent_task = asyncio.create_task(agent.run(snapshot.plan, message, snapshot.messages, status))
+        heartbeat_task = asyncio.create_task(heartbeat())
+        try:
+            done, _ = await asyncio.wait((agent_task, heartbeat_task), return_when=asyncio.FIRST_COMPLETED)
+            if heartbeat_task in done:
+                agent_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await agent_task
+                await heartbeat_task
+            candidate, reply, changed = await agent_task
+        finally:
+            agent_task.cancel()
+            heartbeat_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await agent_task
+            with suppress(asyncio.CancelledError):
+                await heartbeat_task
         if changed:
             candidate = validate_plan(candidate)
-            # Keep the final transaction on this task so cancellation cannot outlive a detached commit thread.
-            version = repository().commit_plan(project_id, token, expected_version, candidate, "chat", message.strip(), reply)
-            completion = {"type": "complete", "version": version, "plan": candidate.model_dump(mode="json"), "message": reply}
-            await websocket.send_json(completion)
-            return True
-        else:
-            await asyncio.to_thread(repository().append_message, project_id, token, "user", message.strip())
-            await asyncio.to_thread(repository().append_message, project_id, token, "assistant", reply)
-            await websocket.send_json({"type": "clarification", "version": expected_version, "message": reply})
+        # Keep finalization on this task so cancellation cannot outlive the atomic commit.
+        terminal = repository().finalize_chat_request(
+            project_id, token, request_id, owner_token, candidate, reply, changed,
+        )
+        await websocket.send_json(terminal)
+        return True
     except VersionConflict:
-        await websocket.send_json({"type": "error", "code": "stale", "message": "The plan changed while the request was running. Reload and retry."})
+        await release_request()
+        await send({"type": "error", "code": "stale", "message": "The plan changed while the request was running. Reload and retry."})
+    except RequestCollision:
+        await send({"type": "error", "code": "invalid_request", "message": "That request ID was already used for different input."})
+    except RequestOwnershipLost:
+        await release_request()
+        cached = await asyncio.to_thread(repository().chat_request_terminal, project_id, request_id)
+        if cached:
+            terminal = cached
+            await websocket.send_json(cached)
+            return True
+        await send({"type": "error", "code": "processing", "message": "The request is being recovered. Reconnect to continue."})
     except AgentConfigurationError as error:
-        await websocket.send_json({"type": "error", "code": "configuration", "message": str(error)})
+        await release_request()
+        await send({"type": "error", "code": "configuration", "message": str(error)})
     except PlanEditError as error:
-        await websocket.send_json({"type": "error", "code": "invalid_edit", "message": str(error)})
+        await release_request()
+        await send({"type": "error", "code": "invalid_edit", "message": str(error)})
     except asyncio.CancelledError:
-        if completion is not None:
-            await websocket.send_json(completion)
+        if terminal is not None:
+            await websocket.send_json(terminal)
             return True
         raise
     except Exception:
-        await websocket.send_json({"type": "error", "code": "processing", "message": "The plan could not be updated. Your existing plan was kept; retry when ready."})
+        if terminal is not None:
+            return True
+        await release_request()
+        await send({"type": "error", "code": "processing", "message": "The plan could not be updated. Your existing plan was kept; retry when ready."})
+    finally:
+        if terminal is None:
+            await release_request()
 
 
 @app.websocket("/api/projects/{project_id}/chat")
@@ -331,6 +399,7 @@ async def project_chat(websocket: WebSocket, project_id: str):
         return
     await websocket.send_json({"type": "connected", "version": snapshot.version})
     active = None
+    active_request_id = None
     try:
         while True:
             payload = await websocket.receive_json()
@@ -339,6 +408,13 @@ async def project_chat(websocket: WebSocket, project_id: str):
                 continue
             if payload.get("type") == "cancel":
                 if active and not active.done():
+                    if payload.get("request_id") != active_request_id:
+                        await websocket.send_json({"type": "error", "request_id": payload.get("request_id"),
+                                                   "code": "invalid_request", "message": "Cancel the active request by its request ID."})
+                        continue
+                    terminal = await asyncio.to_thread(
+                        repository().cancel_chat_request, project_id, token, active_request_id,
+                    )
                     active.cancel()
                     committed = False
                     try:
@@ -346,12 +422,17 @@ async def project_chat(websocket: WebSocket, project_id: str):
                     except asyncio.CancelledError:
                         pass
                     if not committed:
-                        await websocket.send_json({"type": "cancelled", "message": "Request cancelled. The plan was not changed."})
+                        await websocket.send_json(terminal or {"type": "cancelled", "request_id": active_request_id,
+                                                               "message": "Request cancelled. The plan was not changed."})
                 continue
             if payload.get("type") != "message" or (active and not active.done()):
-                await websocket.send_json({"type": "error", "code": "busy", "message": "Wait for the current request or cancel it first."})
+                await websocket.send_json({"type": "error", "request_id": payload.get("request_id"),
+                                           "code": "busy", "message": "Wait for the current request or cancel it first."})
                 continue
+            active_request_id = payload.get("request_id")
             active = asyncio.create_task(run_chat(websocket, project_id, token, payload))
     except WebSocketDisconnect:
         if active and not active.done():
             active.cancel()
+            with suppress(asyncio.CancelledError, WebSocketDisconnect):
+                await active
