@@ -59,9 +59,15 @@ describe('plan view', () => {
   })
 
   it('keeps an empty plan usable', async () => {
-    vi.spyOn(global, 'fetch').mockResolvedValue({ ok: true, json: async () => ({ tasks: [] }) })
+    const fetch = vi.spyOn(global, 'fetch').mockResolvedValue({ ok: true, json: async () => ({ project_id: 'p1', conversation_id: 'c1', workspace_token: 'token', version: 2, plan: { tasks: [] }, messages: [] }) })
     render(<App />)
     expect(await screen.findByText('No tasks in this plan')).toBeInTheDocument()
+    const resetButton = screen.getByRole('button', { name: 'Reset' })
+    const undoButton = screen.getByRole('button', { name: 'Undo' })
+    expect(resetButton.nextElementSibling).toBe(undoButton)
+    expect(undoButton).toBeEnabled()
+    fireEvent.click(undoButton)
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2))
   })
 
   it('rejects malformed records and keeps valid records', async () => {
@@ -76,7 +82,7 @@ describe('plan view', () => {
     const { container } = render(<App />)
     await waitFor(() => expect(screen.getAllByText('First task').length).toBeGreaterThan(0))
     expect(screen.getByRole('button', { name: 'Zoom out' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Fit plan' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Reset' })).toBeInTheDocument()
     expect(container.querySelector('.timeline-scroll')).toBeInTheDocument()
   })
 
@@ -411,7 +417,9 @@ describe('plan view', () => {
     expect(newProjectButton).not.toHaveTextContent('New project')
     expect(undoButton).toHaveTextContent('↶')
     expect(undoButton).not.toHaveTextContent('Undo')
-    expect(undoButton.closest('.chart-actions').previousElementSibling).toHaveClass('chart-card')
+    const resetButton = screen.getByRole('button', { name: 'Reset' })
+    expect(undoButton.parentElement).toHaveClass('chart-controls')
+    expect(resetButton.nextElementSibling).toBe(undoButton)
     fireEvent.click(undoButton)
     await waitFor(() => expect(screen.getByLabelText('Active project')).toHaveValue('p1'))
     expect(screen.getByLabelText('Active project').querySelectorAll('option')).toHaveLength(2)

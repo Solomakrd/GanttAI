@@ -28,7 +28,7 @@ function barGeometry(position, zoom) {
   }
 }
 
-export function GanttChart({ tasks, onSelectTask, disabled = false, widths, taskTableMax, mobile = false, onWidthChange, onWidthReset }) {
+export function GanttChart({ tasks, onSelectTask, onUndo, canUndo = false, disabled = false, widths, taskTableMax, mobile = false, onWidthChange, onWidthReset }) {
   const { t, formatDate } = useI18n()
   const scrollRef = useRef(null)
   const [zoom, setZoom] = useState(1)
@@ -57,10 +57,6 @@ export function GanttChart({ tasks, onSelectTask, disabled = false, widths, task
     }
   }, [tasks])
 
-  if (!tasks.length) {
-    return <section className="chart-card empty-chart" aria-label={t('interactiveChart')}><span className="empty-mark">+</span><strong>{t('noTasks')}</strong><span>{t('noTasksHelp')}</span></section>
-  }
-
   const chartWidth = days.length * PX_PER_DAY
   const chartHeight = tasks.length * ROW_HEIGHT
   const fitPlan = () => {
@@ -84,9 +80,11 @@ export function GanttChart({ tasks, onSelectTask, disabled = false, widths, task
         <span>{Math.round(zoom * 100)}%</span>
         <button type="button" onClick={() => setZoom((value) => Math.min(1.75, value + 0.25))} aria-label={t('zoomIn')}>+</button>
         <button type="button" className="fit-button" onClick={fitPlan}>{t('fitPlan')}</button>
+        {onUndo && <button type="button" disabled={disabled || !canUndo} onClick={onUndo} aria-label={t('undo')}><span aria-hidden="true">↶</span></button>}
       </div>
     </div>
-     <div className="timeline-scroll" ref={scrollRef}>
+    {!tasks.length ? <div className="empty-chart"><span className="empty-mark">+</span><strong>{t('noTasks')}</strong><span>{t('noTasksHelp')}</span></div> : <>
+      <div className="timeline-scroll" ref={scrollRef}>
        <div className="timeline" style={{ minWidth: `${widths.taskTable + chartWidth * zoom}px`, '--task-column': `${widths.taskTable}px`, '--task-name-column': `${widths.taskName}px` }}>
           <div className="task-table">
              <div className="task-heading"><span>{t('task')}</span><span>{t('ownerLength')}</span></div>
@@ -123,7 +121,8 @@ export function GanttChart({ tasks, onSelectTask, disabled = false, widths, task
            </div>
          </div>
       </div>
-    </div>
-    <div className="chart-footer"><span><i className="legend-swatch" />{t('taskDuration')}</span><span><i className="legend-line" />{t('predecessor')}</span><span className="date-range">{formatDate(firstDay, { month: 'short', day: 'numeric', year: 'numeric' })} – {formatDate(lastDay, { month: 'short', day: 'numeric', year: 'numeric' })}</span></div>
+      </div>
+      <div className="chart-footer"><span><i className="legend-swatch" />{t('taskDuration')}</span><span><i className="legend-line" />{t('predecessor')}</span><span className="date-range">{formatDate(firstDay, { month: 'short', day: 'numeric', year: 'numeric' })} – {formatDate(lastDay, { month: 'short', day: 'numeric', year: 'numeric' })}</span></div>
+    </>}
   </section>
 }

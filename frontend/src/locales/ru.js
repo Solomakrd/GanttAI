@@ -14,7 +14,7 @@ export const ru = {
   rejectedTasks: ({ count, ids }) => `${count} ${plural(count, 'некорректная запись задачи исключена', 'некорректные записи задач исключены', 'некорректных записей задач исключено')} (${ids}).`,
   planAssistantBoundary: 'Граница плана и ИИ-ассистента', interactiveChart: 'Интерактивная диаграмма Ганта', noTasks: 'В плане нет задач',
   noTasksHelp: 'Попросите ИИ-ассистента или импортируйте книгу Excel, чтобы заполнить шкалу времени.', timeline: 'Шкала времени', deliveryPlan: 'План работ',
-  zoomOut: 'Уменьшить масштаб', zoomIn: 'Увеличить масштаб', fitPlan: 'Показать весь план', task: 'Задача', ownerLength: 'Исполнитель / срок',
+  zoomOut: 'Уменьшить масштаб', zoomIn: 'Увеличить масштаб', fitPlan: 'Сброс', task: 'Задача', ownerLength: 'Исполнитель / срок',
   editDetails: ({ task }) => `Изменить задачу «${task}»`, editBar: ({ task }) => `Изменить срок задачи «${task}»`,
   durationShort: ({ count }) => `${count} ${plural(count, 'день', 'дня', 'дней')}`, taskOwnerBoundary: 'Граница задачи и исполнителя', taskTimelineBoundary: 'Граница таблицы задач и шкалы времени',
   taskDependencies: 'Зависимости задач', assignedTo: ({ task, assignee }) => `${task}, исполнитель: ${assignee}`,

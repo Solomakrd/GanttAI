@@ -14,7 +14,7 @@ export const en = {
   rejectedTasks: ({ count, ids }) => `${count} invalid task ${count === 1 ? 'record was' : 'records were'} excluded (${ids}).`,
   planAssistantBoundary: 'Plan and AI assistant boundary', interactiveChart: 'Interactive Gantt chart', noTasks: 'No tasks in this plan',
   noTasksHelp: 'Ask the AI assistant or import an Excel workbook to populate the timeline.', timeline: 'Timeline', deliveryPlan: 'Delivery plan',
-  zoomOut: 'Zoom out', zoomIn: 'Zoom in', fitPlan: 'Fit plan', task: 'Task', ownerLength: 'Owner / length',
+  zoomOut: 'Zoom out', zoomIn: 'Zoom in', fitPlan: 'Reset', task: 'Task', ownerLength: 'Owner / length',
   editDetails: ({ task }) => `Edit ${task} details`, editBar: ({ task }) => `Edit ${task} timeline bar`,
   durationShort: ({ count }) => `${count}d`, taskOwnerBoundary: 'Task and owner boundary', taskTimelineBoundary: 'Task table and timeline boundary',
   taskDependencies: 'Task dependencies', assignedTo: ({ task, assignee }) => `${task}, assigned to ${assignee}`,
