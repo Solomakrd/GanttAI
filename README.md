@@ -1,20 +1,70 @@
 # GanttAI
 
-React Gantt timeline backed by FastAPI and PostgreSQL. The initial “Ознакомительный проект” contains a deterministic five-task seed. Named projects created afterward start empty and can be populated manually, through Excel, or with the adjacent OpenRouter/MCP chat.
+Веб-приложение для плана работ: интерактивная диаграмма Гантта, загрузка Excel, правки на естественном языке и экспорт обратно в книгу. Интерфейс на React, API на FastAPI, состояние в PostgreSQL. Модель не пишет в базу сама: она вызывает только внутренние инструменты MCP, а сервер проверяет план и сохраняет его одной версией.
 
-Use **Add task**, or select a task name or timeline bar, to create or edit its name, description, assignee, duration, start date, and ID-based predecessors. The end date is derived. Each successful save is validated on the server as one immutable version; manually entered dates are not automatically moved to follow predecessors. Cancelling or a failed/stale save leaves the chart and draft unchanged.
+При первом открытии создаётся проект «Ознакомительный проект» с пятью задачами. Следующие проекты пустые. Их заполняют вручную, из Excel или через чат. Неуспешная правка, отмена и устаревшая версия не затирают текущий план.
 
-## Run locally
+## Содержание
 
-Python 3.10+, Node.js 22.22.2+, Docker, and an OpenRouter API key are required for the complete application.
+- [Демонстрация](#демонстрация)
+- [Запуск](#запуск)
+- [Пример Excel](#пример-excel)
+- [Архитектура](#архитектура)
+- [Принятые решения](#принятые-решения)
+- [Как использовались AI-ассистенты](#как-использовались-ai-ассистенты)
+- [Roadmap to production](#roadmap-to-production)
+- [Контракт Excel](#контракт-excel)
+- [Проверка](#проверка)
+
+## Демонстрация
+
+Основной сценарий: загрузка Excel → правка через чат → экспорт.
+
+[Открыть видео `docs/demo.mp4`](docs/demo.mp4)
+
+<video src="docs/demo.mp4" controls width="100%">
+  <a href="docs/demo.mp4">Смотреть демонстрацию</a>
+</video>
+
+На записи: книга попадает в диаграмму, чат меняет план, **Экспорт в Excel** забирает уже изменённую версию. Тот же путь можно повторить на файлах из [примеров](#пример-excel).
+
+Короткий прогон без видео:
+
+1. Запустите приложение и откройте чат «ИИ-ассистент».
+2. **Импорт** → [`examples/excel/01-simple-chain.xlsx`](examples/excel/01-simple-chain.xlsx) → дата начала `02.10.2026` → **Импортировать план**.
+3. Напишите в чат: `Добавь после «Проверка» задачу «Демонстрация» на два дня и назначь её Майе`.
+4. Дождитесь новой версии на диаграмме. **Отмена** или ошибка оставляют прежний план.
+5. **Экспорт в Excel**. Повторный импорт скачанной книги с другой датой не должен сдвигать уже записанные сроки.
+
+## Запуск
+
+Нужны Python 3.10+, Node.js 22.22.2+, Docker с Compose и ключ OpenRouter. Команды рассчитаны на macOS и Linux. Диаграмма и Excel работают без ключа; чат — нет.
+
+Ключ читает только API. Он не уходит в браузер и не пишется в базу.
+
+### Локально
 
 ```sh
 cp .env.example .env
-# Set POSTGRES_PASSWORD, then use localhost in DATABASE_URL for host-run development.
+```
+
+В `.env` задайте пароль и **хост `localhost`**. Имя `postgres` из примера нужно только контейнерам, не процессам на машине.
+
+```sh
+POSTGRES_PASSWORD=choose-a-url-safe-password
+DATABASE_URL=postgresql+psycopg://ganttai:choose-a-url-safe-password@localhost:5432/ganttai
+OPENROUTER_API_KEY=sk-or-...
+OPENROUTER_MODEL=openai/gpt-5-mini
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+```
+
+Пароль должен быть безопасен для URL. База для разработки:
+
+```sh
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d postgres
 ```
 
-Set `OPENROUTER_API_KEY` and the required OpenRouter model slug in `OPENROUTER_MODEL` (for example, `openai/gpt-5-mini`) in the server environment. Requests use `OPENROUTER_BASE_URL=https://openrouter.ai/api/v1`. The key is used only by FastAPI and is never sent to or stored by the browser/database. Then migrate and run the API:
+API:
 
 ```sh
 cd backend
@@ -25,30 +75,26 @@ set -a; source ../.env; set +a
 ./.venv/bin/python -m uvicorn app.main:app --reload --port 8000
 ```
 
-In another terminal:
+Фронтенд, в другом терминале:
 
 ```sh
 cd frontend
 npm ci
-npm run dev -- --host 127.0.0.1
+VITE_API_URL=http://localhost:8000 npm run dev -- --host 127.0.0.1
 ```
 
-Open `http://localhost:5173` (or `http://127.0.0.1:5173`). Set `VITE_API_URL=http://localhost:8000` for the local Vite process; production leaves it unset so HTTP and WebSocket requests use the browser's current origin. The local API permits these two frontend origins even when the sourced `CORS_ORIGINS` value is empty. Interactive API documentation is at `http://localhost:8000/docs`.
+Откройте [http://127.0.0.1:5173](http://127.0.0.1:5173). Документация API: [http://localhost:8000/docs](http://localhost:8000/docs). Локальный API пускает эти два origin даже при пустом `CORS_ORIGINS`.
 
-## Deploy to one Linux VPS
+### Один VPS
 
-The production stack runs PostgreSQL, a one-shot Alembic migration, FastAPI, and an Nginx-hosted SPA on one private Compose network. Only Nginx port 80 is published. PostgreSQL data lives in the `ganttai-postgres` named volume, and the API does not create tables at request time.
-
-Install a current Docker Engine with the Compose plugin on the VPS, clone the repository, and create the untracked environment file:
+Продакшен-стек — PostgreSQL, одноразовая миграция, FastAPI и Nginx со SPA в одной приватной сети. Наружу смотрит только порт Nginx. Том данных: `ganttai-postgres`. Таблицы в момент запроса не создаются.
 
 ```sh
 cp .env.example .env
 chmod 600 .env
 ```
 
-Set a long, URL-safe `POSTGRES_PASSWORD`, put the same password in `DATABASE_URL`, and set `OPENROUTER_API_KEY`. Keep `DATABASE_URL` pointed at the Compose hostname `postgres`, not `localhost`. Do not commit or paste `.env` into logs or support requests. `CORS_ORIGINS` should remain empty for the normal same-origin deployment.
-
-Build, migrate, and start the stack:
+Здесь `DATABASE_URL` должен указывать на хост `postgres`, не на `localhost`. Заполните `POSTGRES_PASSWORD` и `OPENROUTER_API_KEY`. `CORS_ORIGINS` оставьте пустым: фронт и API на одном origin.
 
 ```sh
 docker compose config --quiet
@@ -57,43 +103,18 @@ docker compose up -d
 docker compose ps
 ```
 
-Compose waits for PostgreSQL, runs `alembic upgrade head` once, and starts the API only after that command succeeds. A failed migration leaves the API stopped and preserves the database volume. Diagnose it with `docker compose logs migrate postgres`; after correcting the problem, run `docker compose up -d` again. The application is initially available at `http://SERVER_IP/`.
+Сначала поднимается база, затем `alembic upgrade head`, и только после успеха стартует API. Сломанная миграция не публикует API и не удаляет том. Смотреть: `docker compose logs migrate postgres`. Приложение сначала доступно по `http://SERVER_IP/`. Для боя этого мало: домен и TLS ставятся перед стеком, с проксированием WebSocket на `/api/projects/*/chat`. Подробности и порядок закрытия — в [Roadmap to production](docs/roadmap_to_prod.md).
 
-Verify the public path, private database, migrations, and health:
-
-```sh
-curl --fail http://SERVER_IP/
-curl --fail http://SERVER_IP/api/plan
-docker compose exec api python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/health/live').read().decode())"
-docker compose exec api python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/health/ready').read().decode())"
-docker compose exec api alembic current
-docker compose ps
-```
-
-Create a project in the browser, reload it, and test chat after configuring the OpenRouter key. `docker compose ps` should show only the web service with a host port; PostgreSQL and the API must have no published ports.
-
-### DNS and TLS
-
-Plain HTTP is suitable only for initial IP-based verification. Before production use, point a domain's A/AAAA record at the VPS and terminate TLS in front of this stack (for example with Caddy, Traefik, or a host Nginx). Forward to the web service, preserve `Host` and `X-Forwarded-*`, and enable WebSocket upgrades for `/api/projects/*/chat`. Bind `HTTP_PORT` to a loopback/high port if the TLS proxy owns ports 80/443. No frontend rebuild is needed: HTTPS automatically selects `wss://` on the same origin.
-
-### Upgrades and logs
-
-Take a database backup before every upgrade, pull the intended revision, then rebuild and start. Existing named-volume data is retained and migrations run before the new API receives traffic.
+Перед обновлением снимите дамп. Не запускайте `docker compose down -v`: флаг `-v` удаляет базу.
 
 ```sh
 docker compose exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > "ganttai-$(date +%Y%m%d-%H%M%S).dump"
 git pull --ff-only
 docker compose build
 docker compose up -d
-docker compose ps
-docker compose logs --since=10m migrate api web
 ```
 
-For ongoing diagnosis use `docker compose logs -f api web postgres`. Never add `-v` to `docker compose down`; that deletes the named database volume.
-
-### Restore and rollback
-
-Store backups off the VPS. To restore a dump, stop application writes, recreate the target database, restore, and rerun migrations:
+Откат приложения — сборка предыдущего коммита. Миграции сами не откатываются: если старый код не совместим со схемой, сначала восстановите дамп.
 
 ```sh
 docker compose stop web api
@@ -104,85 +125,135 @@ docker compose run --rm migrate
 docker compose up -d
 ```
 
-For an application rollback, check out the previously deployed revision, rebuild, and start it. Alembic migrations are not automatically reversed; if the older application is incompatible with the migrated schema, restore the pre-upgrade dump before starting it. Confirm the project and workspace data after either operation.
+## Пример Excel
 
-## Workbook contract
+Файлы лежат в [`examples/excel`](examples/excel). Для сверки сроков берите дату **02.10.2026 (пятница)**. Берётся первый лист; заголовки русские, порядок колонок любой.
 
-Use `.xlsx`. The **first worksheet**, starting at row 1, must have these five Russian headers; their order may vary:
+| Файл | Зачем |
+| --- | --- |
+| [`01-simple-chain.xlsx`](examples/excel/01-simple-chain.xlsx) | Три задачи подряд и учёт выходных. «Сбор требований» 2–4 октября, «Разработка» 5–8, «Проверка» 9–10 |
+| [`02-parallel-project.xlsx`](examples/excel/02-parallel-project.xlsx) | Восемь задач, параллельные ветки, несколько предшественников. «Запуск» — 16 октября |
+| [`03-names-with-punctuation.xlsx`](examples/excel/03-names-with-punctuation.xlsx) | Запятые и кавычки в названиях, CSV внутри ячейки предшественников |
+| [`04-preserved-dates.xlsx`](examples/excel/04-preserved-dates.xlsx) | Колонки `id`, `start_date`, `end_date`. Даты сохраняются даже при другой дате в календаре |
 
-| задача | описание | исполнитель | длительность | предшественники |
-| --- | --- | --- | --- | --- |
-| Research | Understand the problem | Maya | 3 | |
-| Prototype | Build a draft | Leo | 2 | Research |
-| Review | Review both streams | Noah | 1 | Research, Prototype |
+Ожидаемые ошибки, после которых диаграмма не меняется: [`05-error-duplicate-names.xlsx`](examples/excel/05-error-duplicate-names.xlsx), [`06-error-unknown-predecessor.xlsx`](examples/excel/06-error-unknown-predecessor.xlsx), [`07-error-cycle.xlsx`](examples/excel/07-error-cycle.xlsx), [`08-error-duration.xlsx`](examples/excel/08-error-duration.xlsx). Что именно должно появиться в сообщении — в [`examples/excel/README.md`](examples/excel/README.md).
 
-Choose the file, select a **Project start date** using the calendar picker, then select **Import plan**. No request is sent until a date is chosen. Cancel keeps the displayed plan.
+## Архитектура
 
-- Duration is a positive whole **numeric cell**, measured in inclusive calendar days. Weekends and holidays count. Starting `2026-10-02` (Friday) with duration 3 finishes Sunday `2026-10-04`; its successor starts Monday `2026-10-05`.
-- Root tasks start on the chosen date. Successors start the day after their latest predecessor finishes. Forward references are supported; worksheet row order is preserved in the chart.
-- Task names are trimmed and must be unique, with case-sensitive matching. Duplicate errors identify both conflicting row numbers. Assignees must be non-empty; descriptions and predecessors may be blank.
-- Predecessors are **task names**, never task numbers or IDs. Multiple names use CSV syntax **inside one cell**: `Research, Prototype`. For names containing commas or quotes, use `"Design, review","Say ""go"""`. Unknown names, repeated predecessors, self-references and dependency cycles are rejected.
-- Blank and whitespace-only rows are ignored, including formatted empty rows and gaps between tasks; they do not count toward the 500-task limit. Errors still refer to original worksheet row numbers. Formulas and Excel error cells are rejected; paste values before uploading. Exported user text is written as literal strings, including values beginning with `=`.
-
-### Export and reimport
-
-**Export Excel** downloads `gantt-plan.xlsx` containing the displayed plan, including imported tasks. It includes the five required headers plus optional `id`, `start_date`, and `end_date` columns. Predecessors remain names.
-
-On reimport:
-
-- Supplied IDs are preserved and must be unique. Blank/missing IDs receive generated IDs.
-- Supply dates as `YYYY-MM-DD` text or Excel date cells without a time. Supply **both dates per row or leave both blank**. Fully dated exports can also be imported via the API without a project start date; the UI always asks for a date, which only schedules undated tasks.
-- Supplied dates are **validated and preserved**, even if another project start date is selected. Their inclusive range must match duration, and every successor must start after its predecessors finish. Gaps are allowed. Invalid dates are rejected rather than silently rescheduled.
-- Imports are atomic. A validation or network error keeps the current chart and allows retry. File selection can be repeated with the same filename after corrections.
-
-Imported plans are saved as immutable versions in the active PostgreSQL project. Reload restores the workspace's named project list plus its latest project and conversation. The browser stores only one anonymous workspace token; PostgreSQL stores its SHA-256 hash on the workspace, which may own multiple projects. **New project** requires a 1–64 character name and opens an empty project without replacing the token. Renaming changes metadata only. Deleting permanently removes the project's tasks, versions, and chat; deleting the final project atomically creates a fresh seeded “Ознакомительный проект” under the same token. Concurrent task, Excel, and chat results use an expected version and cannot overwrite newer state.
-
-## Plan chat
-
-The assistant supports adding, renaming, describing, reassigning, moving, resizing and deleting tasks, plus replacing dependencies. Dates are inclusive calendar days. Schedule-changing tasks and their descendants are rescheduled while unrelated tasks retain their dates. Ambiguous requests produce a clarification without changing the plan; **Cancel** and failures preserve the exact current version.
-
-The model can edit only through the official MCP SDK's in-process server/client in `backend/app/mcp_server.py`. There is no public MCP transport and no filesystem, shell, database, credential or arbitrary network tool. WebSocket authentication is the first bounded protocol message, so workspace tokens do not appear in URLs. WebSockets expose bounded lifecycle states, tool names, user-safe results, final messages and validated plans, never hidden reasoning or provider payloads. Each successful request is validated and committed once in a PostgreSQL transaction.
-
-### Limits and API
-
-- 2 MiB workbook file; multipart requests additionally allow 64 KiB overhead, enforced before parsing/spooling.
-- 20 MiB expanded ZIP contents; at most 1,000 ZIP entries.
-- At most 500 data rows, 32 columns, 10,000 dependency relationships, and a 730-calendar-day chart span. Each duration is 1–730 days.
-- Text cells must fit Excel's 32,767-character limit. The 500-row limit applies to nonempty data rows, not the physical worksheet length.
-
-Endpoints:
-
-- `GET /api/plan`: fresh seeded `Plan`.
-- `POST /api/plan/import`: multipart `file` and `start_date` (`YYYY-MM-DD`, required for undated tasks); returns validated `Plan`.
-- `POST /api/plan/export`: JSON `{"tasks": [...]}` using the existing ID-based task contract; returns an `.xlsx` download.
-- `POST /api/projects`: without a token, creates the seeded introductory project and anonymous workspace token; with a token and `{"name":"…"}`, creates an empty named project.
-- `GET /api/workspace`: lists the token's named projects and restores its latest project, plan version and messages.
-- `PATCH /api/projects/{id}`: renames an authorized project with `{"name":"…"}` without changing its plan version.
-- `DELETE /api/projects/{id}`: permanently deletes an authorized project aggregate and returns the workspace with its deterministic replacement active.
-- `POST /api/projects/{id}/import`: version-checked persisted Excel import.
-- `POST /api/projects/{id}/undo`: writes the prior content as a new immutable version.
-- `PATCH /api/projects/{id}/tasks/{task_id}`: validates and atomically saves a version-checked task edit.
-- `POST /api/projects/{id}/tasks`: creates an ID-assigned task from a version-checked task form and derives its inclusive end date.
-- `WS /api/projects/{id}/chat`: version-checked chat, safe status events and atomic plan replacement.
-
-Workbook errors use `detail: {message, sheet, row, column}` where location is available, with HTTP 422 for invalid workbooks or 413 for file/expanded-size limits. FastAPI request-schema errors use its standard `detail` array; the UI handles both.
-
-## Verification
-
-```sh
-cd backend
-./.venv/bin/python -m pytest
+```mermaid
+flowchart TB
+  subgraph browser [Браузер]
+    UI["React: диаграмма, форма задачи, Excel, чат"]
+  end
+  subgraph compose [Docker Compose]
+    WEB[Nginx]
+    API[FastAPI]
+    MIG[Alembic]
+    PG[(PostgreSQL)]
+  end
+  UI -->|HTTP и WebSocket| WEB
+  WEB -->|/api| API
+  MIG --> PG
+  API --> PG
+  API --> MCP["MCP в процессе"]
+  MCP --> ED[PlanEditor]
+  API --> OR[OpenRouter]
 ```
 
+| Слой | Где | Роль |
+| --- | --- | --- |
+| Интерфейс | `frontend/src` | Диаграмма, модалка задачи, импорт и экспорт, чат. Свой UI, без отдельной библиотеки компонентов. Языки: русский и английский |
+| API | `backend/app/main.py` | Проекты, версии, Excel, WebSocket чата, `/health/live` и `/health/ready` |
+| План | `plan_service.py`, `excel.py` | Один и тот же граф для формы, книги и инструментов модели |
+| Агент | `agent.py`, `mcp_server.py` | OpenAI SDK против OpenRouter. Инструменты обнаруживаются через официальный MCP SDK, но сервер не слушает сеть |
+| Данные | `repositories.py`, Alembic | Workspace, проекты, иммутабельные версии плана в JSONB, переписка |
+| Поставка | `docker-compose.yml`, `deploy/nginx.conf` | Один origin: SPA и `/api`, upgrade для WebSocket |
+
+Токен workspace передаётся заголовком `X-Workspace-Token`. В WebSocket это первое сообщение протокола, не часть URL. Сервер хранит SHA-256.
+
+Версия плана — оптимистическая. Excel, форма и чат передают ожидаемый номер. Более новая версия не перезаписывается. Успешный ход чата коммитится одной транзакцией уже после валидации. Уточнение модели план не меняет.
+
+Инструменты модели: `read_plan`, `add_task`, `update_task`, `set_dependencies`, `delete_tasks`. В Excel предшественники — названия задач. В сохранённом плане — их id, поэтому переименование не рвёт граф.
+
+Конец задачи выводится из начала и длительности. День календарный: пятница плюс 3 дня заканчивается в воскресенье, наследник начинается в понедельник.
+
+## Принятые решения
+
+| Решение | Зачем |
+| --- | --- |
+| MCP внутри процесса, без публичного транспорта | Модель не получает shell, файлы, SQL и произвольную сеть. Список инструментов закрытый |
+| Ключ OpenRouter только на сервере | Браузер и база его не видят. В WebSocket уходят статусы, имена инструментов и итоговый текст, не скрытые рассуждения и не сырой ответ провайдера |
+| Иммутабельные версии | Отмена — это новая версия со старым содержимым, а не правка истории. Конфликт версий оставляет оба клиента целыми |
+| Автоприменение валидной правки чата | Пользователь видит результат сразу. Ошибочный или оборванный ход не коммитится; есть **Отменить** |
+| Имена в книге, id в базе | Книгу можно читать глазами. Граф не зависит от регистра отображаемого текста после импорта |
+| Календарные сутки | Одинаковое правило для импорта, формы и агента. Производственный календарь не подменялся догадкой |
+| Ручные даты не догоняют предшественников | Форма сохраняет то, что ввели. Чат сдвигает потомков, когда меняет расписание, и не трогает посторонние задачи |
+| Анонимный workspace | Прототип открывается без регистрации. Один токен владеет несколькими проектами. Для боя этого мало |
+| Один VPS и HTTP в Compose | Секреты вне образа, миграция до трафика, Postgres без порта хоста. TLS и наблюдаемость вынесены в роадмап, а не имитируются в приложении |
+| Зависимости зафиксированы lock-файлами | Образы собираются через `npm ci` и хешированный `requirements.lock`. Базовые образы закреплены digest |
+
+## Как использовались AI-ассистенты
+
+Код собирался в OpenCode по методу BMad. Навык `bmad-build` вёл заметные изменения через письменный план, реализацию и ревью. Планы лежат в [`_bmad-output`](_bmad-output): диаграмма, Excel, чат и MCP, модалка задачи, локализация, рабочее пространство, деплой. Намерение человека в этих планах заморожено отдельно от того, что ассистент додумал по коду.
+
+Ассистент писал код, тесты и черновики документации. Человек задавал срез, принимал результат или откатывал его. Это видно в истории, а не только в планах:
+
+- автоповтор последнего сообщения чата был сделан и снят, чтобы обрыв соединения не продублировал правку;
+- обход стрелок зависимостей вокруг коллизий был сделан и снят;
+- деплой ограничен одним VPS. Kubernetes и облачный контур в план не входили.
+
+Первичный дизайн собрали в Open Design. По этому макету потом верстали рабочее пространство: шапка, диаграмма, панель ассистента и обмен с Excel. В код переносили композицию и визуальный язык, а не генерировали вёрстку из макета автоматически.
+
+Провайдер в автоматических тестах замокан. Прогоны не тратят OpenRouter и не записывают ключ.
+
+Ассистенту не отдавали право обойти границы продукта. Ключ не переносился в браузер. Публичный MCP не добавлялся. Невалидный план не сохранялся «чтобы модель договорила». Сырой ответ провайдера не показывался в чате.
+
+## Roadmap to production
+
+Полный разбор — в [`docs/roadmap_to_prod.md`](docs/roadmap_to_prod.md): сознательные долги, пробелы, риски и критерий, после которого контур можно считать боевым.
+
+Порядок закрытия. Пункты 5–8 можно вести параллельно с 3–4, но только после обоих P0.
+
+| | Что закрыть |
+| --- | --- |
+| P0 | HTTPS, лимиты запросов и защита от перерасхода OpenRouter |
+| P0 | Логи, алерты, автоматические бэкапы и проверка восстановления |
+| P1 | CI/CD |
+| P1 | Пользователи, сессии и роли |
+| P1 | Адаптивная вёрстка |
+| P1 | Отображение календаря |
+| P2 | Быстрые ответы в чате |
+| P2 | Голосовой ввод |
+
+Пока это не сделано, наружу нельзя отдавать открытый HTTP с живым ключом модели. Токен в `localStorage` — это не учётка. Валидация не ловит уверенную, но неверную правку: она ловит цикл, чужое имя и сломанные даты. Для такой правки уже есть версии и **Отменить**, но нет шага подтверждения.
+
+## Контракт Excel
+
+Книга `.xlsx`, первый лист, строка 1. Обязательные заголовки: `задача`, `описание`, `исполнитель`, `длительность`, `предшественники`. Экспорт добавляет `id`, `start_date`, `end_date`.
+
+- Длительность — целое число в ячейке, от 1 до 730. Пустые строки не считаются. Потолок — 500 непустых строк.
+- Предшественники — названия, не номера. Несколько имён в одной ячейке: `Research, Prototype`. Имена с запятой или кавычкой — CSV: `"Design, review","Say ""go"""`.
+- Имена уникальны после обрезки пробелов, сравнение чувствительно к регистру. Циклы, самоссылки и неизвестные имена отвергаются целиком: диаграмма не меняется.
+- Формулы и ошибочные ячейки не принимаются. Текст, который начинается с `=`, при экспорте пишется как текст.
+- Даты — обе или ни одной, формат `YYYY-MM-DD` либо ячейка даты без времени. Заданные даты проверяются и сохраняются. Дата в календаре нужна задачам без сроков.
+- Файл до 2 МиБ, распакованный ZIP до 20 МиБ, не больше 1000 записей архива, 32 колонок и 10 000 связей. Спан диаграммы — до 730 дней.
+
+Импорт в проект пишет новую версию. Повторный выбор того же имени файла после исправления книги возможен.
+
+## Проверка
+
 ```sh
-cd frontend
-npm test -- --run
-npm run build
+cd backend && ./.venv/bin/python -m pytest
+cd frontend && npm test -- --run && npm run build
 ```
 
-Backend tests exercise actual multipart/import/export routes, scheduling, graph validation, size/row/date limits, literal text and seeded/imported round trips. Frontend tests cover date selection, cancellation, atomic chart replacement, export payloads and downloads, failures/retries, loading locks and selecting the same file again.
+Сценарии PostgreSQL в отдельной временной схеме:
 
-Validate the production artifacts from the repository root with an appropriately populated untracked `.env`:
+```sh
+TEST_DATABASE_URL=postgresql+psycopg://ganttai:ganttai@localhost:5432/ganttai sh backend/scripts/test-postgres.sh
+```
+
+Образы, из корня, с заполненным `.env`:
 
 ```sh
 docker compose config --quiet
@@ -190,14 +261,4 @@ docker compose build
 ./deploy/smoke-test.sh
 ```
 
-`docker compose config` resolves environment values and may print secrets if run without `--quiet`; do not share that output. The smoke test uses uniquely named isolated containers, a run-specific high port, and a dedicated volume which it removes on exit. Image builds use the hashed Python lock, npm lockfile, digest-pinned base images, and a `.dockerignore` that excludes environment files, local dependencies, caches, and BMad artifacts from the build context. Regenerate `backend/requirements.lock` after changing direct requirements with `uv pip compile backend/requirements.txt --universal --generate-hashes --output-file backend/requirements.lock`.
-
-To run the real PostgreSQL migration/JSONB/locking integration test in an isolated temporary schema:
-
-```sh
-TEST_DATABASE_URL=postgresql+psycopg://ganttai:ganttai@localhost:5432/ganttai sh backend/scripts/test-postgres.sh
-```
-
-Provider calls are mocked in automated tests. To exercise chat manually, configure a development key and test clarification, a multi-edit request, cancellation, stale Excel/chat operations, undo, reload, and a 375px viewport. Do not record API keys or raw provider payloads.
-
-For browser verification, run both servers and import the sample dependency chain above; export and reimport it with a different selected start date and confirm the original dates remain. Try a workbook with a duplicate task name and confirm the chart remains unchanged. Repeat at desktop and 375px-wide viewports, checking file/date controls, feedback, horizontal timeline scrolling and zoom/fit actions.
+`docker compose config` без `--quiet` может напечатать секреты. Не пересылайте этот вывод. Smoke-test поднимает изолированные контейнеры и удаляет свой том.
