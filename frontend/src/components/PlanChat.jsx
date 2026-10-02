@@ -31,8 +31,8 @@ export function PlanChat({ project, disabled, onPlan, onOperation }) {
   const [connection, setConnection] = useState('connecting')
   const [operation, setOperation] = useState(null)
   const [error, setError] = useState(null)
-  const [retry, setRetry] = useState(0)
   const socket = useRef(null)
+  const reconnectNow = useRef(null)
   const pendingRequest = useRef(null)
   const retryRequest = useRef(null)
   const retryError = useRef(null)
@@ -147,8 +147,10 @@ export function PlanChat({ project, disabled, onPlan, onOperation }) {
             retryError.current = eventError
             pendingRequest.current = null
           }
-          setOperation(null)
-          if (!pendingRequest.current) onOperation?.(false)
+          if (!pendingRequest.current) {
+            setOperation(null)
+            onOperation?.(false)
+          }
           setError(eventError)
         }
       })
@@ -156,9 +158,17 @@ export function PlanChat({ project, disabled, onPlan, onOperation }) {
       socket.current = next
     }
 
+    reconnectNow.current = () => {
+      clearTimeout(reconnectTimer)
+      const active = socket.current
+      socket.current = null
+      active?.close()
+      connect()
+    }
     connect()
     return () => {
       stopped = true
+      reconnectNow.current = null
       clearTimeout(reconnectTimer)
       current?.close()
       if (socket.current === current) socket.current = null
@@ -169,7 +179,7 @@ export function PlanChat({ project, disabled, onPlan, onOperation }) {
       retryRequest.current = null
       retryError.current = null
     }
-  }, [project.projectId, project.token, onPlan, onOperation, retry])
+  }, [project.projectId, project.token, onPlan, onOperation])
 
   const send = (event) => {
     event.preventDefault()
@@ -190,19 +200,20 @@ export function PlanChat({ project, disabled, onPlan, onOperation }) {
 
   const retryFailed = () => {
     const request = retryRequest.current
-    if (request && !disabled && !operation && connection === 'connected') {
+    if (request) {
+      if (disabled || operation) return
       retryRequest.current = null
       retryError.current = null
       pendingRequest.current = request
       setError(null)
       setOperation({ key: 'startingRequest' })
       onOperation?.(true)
-      socket.current.send(JSON.stringify(request))
+      if (connection === 'connected') socket.current.send(JSON.stringify(request))
+      else reconnectNow.current?.()
       return
     }
-    if (request) return
     setError(null)
-    if (connection === 'disconnected') setRetry((value) => value + 1)
+    reconnectNow.current?.()
   }
 
   return <aside className="plan-chat" aria-label={t('planAssistant')}>
