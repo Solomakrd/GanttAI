@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { exportPlan, importProjectPlan } from '../api'
 import { errorDescriptor, useI18n } from '../i18n'
 
+const SUCCESS_FEEDBACK_MS = 5000
+
 export function ExcelControls({ tasks, project, disabled, onImport, onOperation }) {
   const { t } = useI18n()
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -19,6 +21,11 @@ export function ExcelControls({ tasks, project, disabled, onImport, onOperation 
   useEffect(() => {
     if (dialogOpen) modalClose.current?.focus()
   }, [dialogOpen])
+  useEffect(() => {
+    if (!feedback || feedback.error) return undefined
+    const timer = setTimeout(() => setFeedback(null), SUCCESS_FEEDBACK_MS)
+    return () => clearTimeout(timer)
+  }, [feedback])
   useEffect(() => {
     if (!dialogOpen) return undefined
     const handleKeydown = (event) => {

@@ -61,6 +61,25 @@ describe('Excel exchange controls', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Import' })).toHaveFocus())
   })
 
+  it('dismisses successful import feedback after five seconds', async () => {
+    let resolve
+    vi.spyOn(global, 'fetch').mockReturnValue(new Promise((done) => { resolve = done }))
+    render(<ExcelControls tasks={[task]} onImport={vi.fn()} />)
+    selectFile()
+    selectDate()
+    fireEvent.click(screen.getByRole('button', { name: 'Import plan' }))
+    vi.useFakeTimers()
+    await act(async () => {
+      resolve({ ok: true, json: async () => ({ tasks: [task] }) })
+      await Promise.resolve()
+    })
+    expect(screen.getByRole('status')).toHaveTextContent('Imported 1 task')
+    await act(() => vi.advanceTimersByTimeAsync(4999))
+    expect(screen.getByRole('status')).toBeInTheDocument()
+    await act(() => vi.advanceTimersByTimeAsync(1))
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
   it('allows selecting the same workbook after validation failure and after success', async () => {
     const user = userEvent.setup()
     const fetch = vi.spyOn(global, 'fetch').mockResolvedValueOnce({ ok: false, status: 422, json: async () => ({ detail: { sheet: 'Tasks', row: 3, column: 'длительность', message: 'Use a positive duration.' } }) }).mockResolvedValue({ ok: true, json: async () => ({ tasks: [task] }) })
