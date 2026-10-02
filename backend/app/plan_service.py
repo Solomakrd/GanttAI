@@ -1,4 +1,5 @@
 import re
+import uuid
 from copy import deepcopy
 from datetime import date, timedelta
 
@@ -162,6 +163,35 @@ class PlanEditor:
                       start_date=start, predecessors=list(predecessors))
         return self._commit(tasks, [task_id] if schedule_changed else [],
                             fixed_starts=[task_id] if schedule_changed else [])
+
+    def create_task(self, task, description, assignee, duration, start_date, predecessors):
+        tasks = self._tasks()
+        by_id = {item["id"]: item for item in tasks}
+        name = task.strip()
+        owner = assignee.strip()
+        if not name:
+            raise PlanEditError("Task name is required.")
+        if not owner:
+            raise PlanEditError("Assignee is required.")
+        if any(item["task"] == name for item in tasks):
+            raise PlanEditError(f"Task name {name!r} already exists.")
+        if len(predecessors) != len(set(predecessors)):
+            raise PlanEditError("A predecessor can be selected only once.")
+        unknown = [key for key in predecessors if key not in by_id]
+        if unknown:
+            raise PlanEditError(f"Unknown predecessor ID {unknown[0]!r}.")
+        try:
+            start = date.fromisoformat(start_date)
+            end = start + timedelta(days=duration - 1)
+        except ValueError as error:
+            raise PlanEditError("start_date must use YYYY-MM-DD.") from error
+        except OverflowError as error:
+            raise PlanEditError(f"Task {name!r} ends outside the supported date range.") from error
+        tasks.append({"id": str(uuid.uuid4()), "task": name, "description": description,
+                      "assignee": owner, "duration": duration, "start_date": start,
+                      "end_date": end, "predecessors": list(predecessors)})
+        self.plan = validate_plan({"tasks": tasks})
+        return self.plan
 
     def dependencies(self, task, predecessors):
         tasks = self._tasks()

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import App from './App'
 import { I18nProvider, detectLocale, useI18n } from './i18n'
 import { PlanChat } from './components/PlanChat'
@@ -73,10 +73,11 @@ describe('localization', () => {
     localStorage.setItem('ganttai.locale', 'en')
     vi.stubGlobal('WebSocket', Socket)
     vi.spyOn(global, 'fetch').mockResolvedValue({ ok: true, json: async () => ({
-      project_id: 'p1', conversation_id: 'c1', workspace_token: 'token', version: 1, plan: { tasks }, messages: [],
+      project_id: 'p1', project_name: 'Customer launch', conversation_id: 'c1', workspace_token: 'token', version: 1, plan: { tasks }, messages: [],
     }) })
     const { container } = render(<I18nProvider><App /></I18nProvider>)
     await screen.findAllByText('Customer text')
+    await waitFor(() => expect(Socket.instance).toBeDefined())
     act(() => Socket.instance.emit({ type: 'connected', version: 1 }))
     fireEvent.change(screen.getByLabelText('Request a plan change'), { target: { value: 'Unsaved chat draft' } })
     fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
@@ -91,7 +92,7 @@ describe('localization', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Планируем безопасные изменения...')
     expect(screen.getByRole('status').querySelector('button')).toBeEnabled()
     expect(screen.getAllByText('Customer text').length).toBeGreaterThan(0)
-    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Проект 1')
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Customer launch')
     expect(container.querySelector('.chart-controls')).toHaveTextContent('125%')
     expect(container.querySelector('.month-strip')).toHaveTextContent(/октябр/i)
     expect(document.title).toContain('Рабочее пространство')

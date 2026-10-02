@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ResizeHandle } from './ResizeHandle'
 import { useI18n } from '../i18n'
 
@@ -16,6 +16,11 @@ function asDay(value) {
   return new Date(`${value.slice(0, 10)}T00:00:00Z`).getTime()
 }
 
+function localDay() {
+  const value = new Date()
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`
+}
+
 function initials(name) {
   return name.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase() || '—'
 }
@@ -28,10 +33,25 @@ function barGeometry(position, zoom) {
   }
 }
 
-export function GanttChart({ tasks, onSelectTask, onUndo, canUndo = false, disabled = false, widths, taskTableMax, mobile = false, onWidthChange, onWidthReset }) {
+export function GanttChart({ tasks, onSelectTask, onAddTask, onUndo, canUndo = false, disabled = false, widths, taskTableMax, mobile = false, onWidthChange, onWidthReset }) {
   const { t, formatDate } = useI18n()
   const scrollRef = useRef(null)
   const [zoom, setZoom] = useState(1)
+  const [today, setToday] = useState(localDay)
+  useEffect(() => {
+    let timer
+    const refresh = () => {
+      setToday(localDay())
+      clearTimeout(timer)
+      const now = new Date()
+      timer = setTimeout(refresh, new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime() - now.getTime() + 100)
+    }
+    const focus = () => refresh()
+    refresh()
+    window.addEventListener('focus', focus)
+    document.addEventListener('visibilitychange', focus)
+    return () => { clearTimeout(timer); window.removeEventListener('focus', focus); document.removeEventListener('visibilitychange', focus) }
+  }, [])
   const { firstDay, lastDay, days, positions, dependencies } = useMemo(() => {
     if (!tasks.length) return { firstDay: 0, lastDay: 0, days: [], positions: new Map(), dependencies: [] }
     const first = Math.min(...tasks.map((task) => asDay(task.start_date)))
@@ -59,6 +79,9 @@ export function GanttChart({ tasks, onSelectTask, onUndo, canUndo = false, disab
 
   const chartWidth = days.length * PX_PER_DAY
   const chartHeight = tasks.length * ROW_HEIGHT
+  const todayTime = asDay(today)
+  const todayLeft = firstDay <= todayTime && todayTime <= lastDay ? ((todayTime - firstDay) / DAY + 0.5) * PX_PER_DAY * zoom : null
+  const todayIsLastDay = todayTime === lastDay
   const fitPlan = () => {
     if (scrollRef.current) scrollRef.current.scrollTo({ left: 0, behavior: 'smooth' })
     setZoom(1)
@@ -79,8 +102,9 @@ export function GanttChart({ tasks, onSelectTask, onUndo, canUndo = false, disab
         <button type="button" onClick={() => setZoom((value) => Math.max(0.75, value - 0.25))} aria-label={t('zoomOut')}>−</button>
         <span>{Math.round(zoom * 100)}%</span>
         <button type="button" onClick={() => setZoom((value) => Math.min(1.75, value + 0.25))} aria-label={t('zoomIn')}>+</button>
-        <button type="button" className="fit-button" onClick={fitPlan}>{t('fitPlan')}</button>
-        {onUndo && <button type="button" disabled={disabled || !canUndo} onClick={onUndo} aria-label={t('undo')}><span aria-hidden="true">↶</span></button>}
+         <button type="button" className="fit-button" onClick={fitPlan}>{t('fitPlan')}</button>
+         {onAddTask && <button type="button" className="add-task-button" disabled={disabled} onClick={onAddTask}>{t('addTask')}</button>}
+         {onUndo && <button type="button" disabled={disabled || !canUndo} onClick={onUndo} aria-label={t('undo')}><span aria-hidden="true">↶</span></button>}
       </div>
     </div>
     {!tasks.length ? <div className="empty-chart"><span className="empty-mark">+</span><strong>{t('noTasks')}</strong><span>{t('noTasksHelp')}</span></div> : <>
@@ -99,8 +123,9 @@ export function GanttChart({ tasks, onSelectTask, onUndo, canUndo = false, disab
              <div className="month-strip">{monthSegments.map((segment) => <span key={segment.label} style={{ width: segment.count * PX_PER_DAY * zoom }}>{segment.label}</span>)}</div>
               <div className="date-strip">{days.map((day) => { const date = new Date(day); const weekend = date.getUTCDay() === 0 || date.getUTCDay() === 6; return <div className={`date-cell${weekend ? ' weekend' : ''}`} key={day} style={{ width: PX_PER_DAY * zoom }}><strong>{formatDate(day, { day: 'numeric' })}</strong><span>{formatDate(day, { weekday: 'short' }).slice(0, 2)}</span></div> })}</div>
            </div>
-           <div className="plot" style={{ width: chartWidth * zoom, height: chartHeight }}>
-              <div className="grid-lines">{days.map((day) => { const weekend = [0, 6].includes(new Date(day).getUTCDay()); return <i className={weekend ? 'weekend' : ''} key={day} style={{ left: (day - firstDay) / DAY * PX_PER_DAY * zoom, width: PX_PER_DAY * zoom }} /> })}</div>
+            <div className="plot" style={{ width: chartWidth * zoom, height: chartHeight }}>
+               <div className="grid-lines">{days.map((day) => { const weekend = [0, 6].includes(new Date(day).getUTCDay()); return <i className={weekend ? 'weekend' : ''} key={day} style={{ left: (day - firstDay) / DAY * PX_PER_DAY * zoom, width: PX_PER_DAY * zoom }} /> })}</div>
+               {todayLeft !== null && <div className={`today-line${todayIsLastDay ? ' final-day' : ''}`} style={{ left: todayLeft }} aria-hidden="true"><span>{t('today')}</span></div>}
               <svg className="connectors" width={chartWidth * zoom} height={chartHeight} aria-label={t('taskDependencies')}>
                 {dependencies.map(({ from, to, key }) => {
                   const fromBar = barGeometry(from, zoom)

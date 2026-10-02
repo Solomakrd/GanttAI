@@ -77,7 +77,7 @@ def test_path_like_task_id_can_be_edited(client):
     token, snapshot = app.state.repository.create(Plan.model_validate({"tasks": [{
         "id": "phase/one", "task": "Phase one", "description": "", "assignee": "Maya", "duration": 1,
         "start_date": "2026-10-01", "end_date": "2026-10-01", "predecessors": [],
-    }]}))
+    }]}), "Paths")
     response = client.patch(
         f"/api/projects/{snapshot.project_id}/tasks/phase/one", headers={"X-Workspace-Token": token},
         json={"expected_version": 1, "task": "Phase one", "description": "Updated", "assignee": "Maya",
@@ -91,7 +91,7 @@ def test_end_date_overflow_returns_an_actionable_422(client):
     token, snapshot = app.state.repository.create(Plan.model_validate({"tasks": [{
         "id": "last-day", "task": "Last day", "description": "", "assignee": "Maya", "duration": 1,
         "start_date": "9999-12-31", "end_date": "9999-12-31", "predecessors": [],
-    }]}))
+    }]}), "Overflow")
     response = client.patch(
         f"/api/projects/{snapshot.project_id}/tasks/last-day", headers={"X-Workspace-Token": token},
         json={"expected_version": 1, "task": "Last day", "description": "", "assignee": "Maya",
@@ -126,3 +126,71 @@ def test_stale_and_unauthorized_task_edits_are_rejected(client):
               "start_date": "2026-10-05", "predecessors": []},
     )
     assert response.status_code == 404
+
+
+def test_manual_task_creation_uses_ids_keeps_requested_dates_and_commits_once(client):
+    project = create(client)
+    response = client.post(
+        f"/api/projects/{project['project_id']}/tasks",
+        headers={"X-Workspace-Token": project["workspace_token"]},
+        json={"expected_version": 1, "task": "Manual milestone", "description": "Entered by a person",
+              "assignee": "Maya", "duration": 2, "start_date": "2026-10-20", "predecessors": ["discovery"]},
+    )
+    assert response.status_code == 200
+    saved = response.json()
+    assert saved["version"] == 2
+    task = saved["plan"]["tasks"][-1]
+    assert task["id"] not in {item["id"] for item in project["plan"]["tasks"]}
+    assert task["start_date"] == "2026-10-20"
+    assert task["end_date"] == "2026-10-21"
+    assert task["predecessors"] == ["discovery"]
+    undone = client.post(
+        f"/api/projects/{project['project_id']}/undo",
+        headers={"X-Workspace-Token": project["workspace_token"]}, json={"expected_version": 2},
+    )
+    assert undone.status_code == 200
+    assert undone.json()["version"] == 3
+    assert all(item["id"] != task["id"] for item in undone.json()["plan"]["tasks"])
+
+
+def test_manual_task_creation_populates_an_empty_project(client):
+    first = create(client)
+    empty = client.post(
+        "/api/projects", headers={"X-Workspace-Token": first["workspace_token"]}, json={"name": "Empty"},
+    ).json()
+    response = client.post(
+        f"/api/projects/{empty['project_id']}/tasks",
+        headers={"X-Workspace-Token": first["workspace_token"]},
+        json={"expected_version": 1, "task": "First manual task", "description": "", "assignee": "Maya",
+              "duration": 1, "start_date": "2026-10-20", "predecessors": []},
+    )
+    assert response.status_code == 200
+    assert [item["task"] for item in response.json()["plan"]["tasks"]] == ["First manual task"]
+
+
+@pytest.mark.parametrize("expected_status, token, version, predecessors", [
+    (404, "wrong", 1, []),
+    (409, None, 0, []),
+    (422, None, 1, ["missing"]),
+])
+def test_manual_task_creation_failures_preserve_the_plan(client, expected_status, token, version, predecessors):
+    project = create(client)
+    response = client.post(
+        f"/api/projects/{project['project_id']}/tasks",
+        headers={"X-Workspace-Token": token or project["workspace_token"]},
+        json={"expected_version": version, "task": "Manual", "description": "", "assignee": "Maya",
+              "duration": 1, "start_date": "2026-10-20", "predecessors": predecessors},
+    )
+    assert response.status_code == expected_status
+    assert app.state.repository.load(project["project_id"], project["workspace_token"]).version == 1
+
+
+def test_manual_task_creation_requires_a_workspace_token(client):
+    project = create(client)
+    response = client.post(
+        f"/api/projects/{project['project_id']}/tasks",
+        json={"expected_version": 1, "task": "Manual", "description": "", "assignee": "Maya",
+              "duration": 1, "start_date": "2026-10-20", "predecessors": []},
+    )
+    assert response.status_code == 401
+    assert app.state.repository.load(project["project_id"], project["workspace_token"]).version == 1

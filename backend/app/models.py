@@ -28,6 +28,7 @@ class Plan(BaseModel):
 
 class ProjectSnapshot(BaseModel):
     project_id: str
+    project_name: str
     conversation_id: str
     version: int
     plan: Plan
@@ -36,6 +37,7 @@ class ProjectSnapshot(BaseModel):
 
 class WorkspaceProject(BaseModel):
     project_id: str
+    project_name: str
     version: int
     created_at: datetime
 

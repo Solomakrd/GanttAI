@@ -295,10 +295,11 @@ def test_websocket_requires_first_message_auth_without_url_credentials(client):
 
 def test_workspace_token_creates_and_restores_multiple_projects(client):
     first = create(client)
-    second_response = client.post("/api/projects", headers={"X-Workspace-Token": first["workspace_token"]})
+    second_response = client.post("/api/projects", headers={"X-Workspace-Token": first["workspace_token"]}, json={"name": "Second"})
     assert second_response.status_code == 200
     second = second_response.json()
     assert second["workspace_token"] == first["workspace_token"]
+    assert second["plan"]["tasks"] == []
 
     workspace = client.get("/api/workspace", headers={"X-Workspace-Token": first["workspace_token"]}).json()
     assert [project["project_id"] for project in workspace["projects"]] == [first["project_id"], second["project_id"]]

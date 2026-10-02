@@ -1,8 +1,8 @@
 # GanttAI
 
-React Gantt timeline backed by FastAPI and PostgreSQL. The initial project contains a deterministic five-task seed. Import/export Excel or use the adjacent OpenRouter/MCP chat to apply validated bulk edits as immutable plan versions.
+React Gantt timeline backed by FastAPI and PostgreSQL. The initial “Ознакомительный проект” contains a deterministic five-task seed. Named projects created afterward start empty and can be populated manually, through Excel, or with the adjacent OpenRouter/MCP chat.
 
-Select a task name or timeline bar in a persisted project to inspect and edit its name, description, assignee, duration, start date, and predecessors. The end date is derived. Saving validates and reschedules the complete change on the server as one immutable version; cancelling or a failed/stale save leaves the chart unchanged.
+Use **Add task**, or select a task name or timeline bar, to create or edit its name, description, assignee, duration, start date, and ID-based predecessors. The end date is derived. Each successful save is validated on the server as one immutable version; manually entered dates are not automatically moved to follow predecessors. Cancelling or a failed/stale save leaves the chart and draft unchanged.
 
 ## Run locally
 
@@ -135,7 +135,7 @@ On reimport:
 - Supplied dates are **validated and preserved**, even if another project start date is selected. Their inclusive range must match duration, and every successor must start after its predecessors finish. Gaps are allowed. Invalid dates are rejected rather than silently rescheduled.
 - Imports are atomic. A validation or network error keeps the current chart and allows retry. File selection can be repeated with the same filename after corrections.
 
-Imported plans are saved as immutable versions in the active PostgreSQL project. Reload restores the workspace's project list plus its latest project and conversation. The browser stores only one anonymous workspace token; PostgreSQL stores its SHA-256 hash on the workspace, which may own multiple projects. **New project** adds a seeded project without replacing the token, and the project selector restores earlier projects. Concurrent Excel/chat results use an expected version and cannot overwrite newer state.
+Imported plans are saved as immutable versions in the active PostgreSQL project. Reload restores the workspace's named project list plus its latest project and conversation. The browser stores only one anonymous workspace token; PostgreSQL stores its SHA-256 hash on the workspace, which may own multiple projects. **New project** requires a 1–64 character name and opens an empty project without replacing the token. Renaming changes metadata only. Deleting permanently removes the project's tasks, versions, and chat; deleting the final project atomically creates a fresh seeded “Ознакомительный проект” under the same token. Concurrent task, Excel, and chat results use an expected version and cannot overwrite newer state.
 
 ## Plan chat
 
@@ -155,11 +155,14 @@ Endpoints:
 - `GET /api/plan`: fresh seeded `Plan`.
 - `POST /api/plan/import`: multipart `file` and `start_date` (`YYYY-MM-DD`, required for undated tasks); returns validated `Plan`.
 - `POST /api/plan/export`: JSON `{"tasks": [...]}` using the existing ID-based task contract; returns an `.xlsx` download.
-- `POST /api/projects`: creates a persisted seeded project and anonymous workspace token.
-- `GET /api/workspace`: lists the token's projects and restores its latest project, plan version and messages.
+- `POST /api/projects`: without a token, creates the seeded introductory project and anonymous workspace token; with a token and `{"name":"…"}`, creates an empty named project.
+- `GET /api/workspace`: lists the token's named projects and restores its latest project, plan version and messages.
+- `PATCH /api/projects/{id}`: renames an authorized project with `{"name":"…"}` without changing its plan version.
+- `DELETE /api/projects/{id}`: permanently deletes an authorized project aggregate and returns the workspace with its deterministic replacement active.
 - `POST /api/projects/{id}/import`: version-checked persisted Excel import.
 - `POST /api/projects/{id}/undo`: writes the prior content as a new immutable version.
 - `PATCH /api/projects/{id}/tasks/{task_id}`: validates and atomically saves a version-checked task edit.
+- `POST /api/projects/{id}/tasks`: creates an ID-assigned task from a version-checked task form and derives its inclusive end date.
 - `WS /api/projects/{id}/chat`: version-checked chat, safe status events and atomic plan replacement.
 
 Workbook errors use `detail: {message, sheet, row, column}` where location is available, with HTTP 422 for invalid workbooks or 413 for file/expanded-size limits. FastAPI request-schema errors use its standard `detail` array; the UI handles both.

@@ -8,7 +8,7 @@ from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile, WebS
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from starlette.concurrency import run_in_threadpool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -18,6 +18,9 @@ from .excel import ExcelError, MAX_FILE_BYTES, read_workbook, write_workbook
 from .models import Plan, ProjectSnapshot, Task, WorkspaceSnapshot
 from .plan_service import PlanEditError, PlanEditor, validate_plan
 from .repositories import AccessDenied, ProjectRepository, VersionConflict
+
+
+INTRODUCTORY_PROJECT_NAME = "Ознакомительный проект"
 
 
 class ImportBodyLimit:
@@ -168,7 +171,21 @@ class UndoRequest(BaseModel):
     expected_version: int
 
 
-class TaskUpdateRequest(BaseModel):
+class ProjectNameRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def trimmed_name(cls, value):
+        if not isinstance(value, str):
+            return value
+        value = value.strip()
+        if not value:
+            raise ValueError("Project name is required.")
+        return value
+
+
+class VersionedTaskRequest(BaseModel):
     expected_version: int
     task: str = Field(min_length=1, max_length=32767)
     description: str = Field(max_length=32767)
@@ -178,18 +195,49 @@ class TaskUpdateRequest(BaseModel):
     predecessors: list[str] = Field(default_factory=list, max_length=500)
 
 
+class TaskUpdateRequest(VersionedTaskRequest):
+    pass
+
+
+class TaskCreateRequest(VersionedTaskRequest):
+    pass
+
+
 @app.get("/api/plan", response_model=Plan)
 def get_plan() -> Plan:
     return Plan(tasks=seeded_tasks())
 
 
 @app.post("/api/projects", response_model=ProjectCreated)
-def create_project(x_workspace_token: Optional[str] = Header(None)) -> ProjectCreated:
+def create_project(body: Optional[ProjectNameRequest] = None,
+                   x_workspace_token: Optional[str] = Header(None)) -> ProjectCreated:
     try:
-        token, snapshot = repository().create(Plan(tasks=seeded_tasks()), x_workspace_token)
+        if x_workspace_token and body is None:
+            raise HTTPException(status_code=422, detail="A project name is required.")
+        plan = Plan(tasks=[]) if x_workspace_token else Plan(tasks=seeded_tasks())
+        name = body.name if x_workspace_token else INTRODUCTORY_PROJECT_NAME
+        token, snapshot = repository().create(plan, name, x_workspace_token)
     except AccessDenied as error:
         raise HTTPException(status_code=404, detail="Workspace not found.") from error
     return ProjectCreated(**snapshot.model_dump(), workspace_token=token)
+
+
+@app.patch("/api/projects/{project_id}", response_model=ProjectSnapshot)
+def rename_project(project_id: str, body: ProjectNameRequest,
+                   x_workspace_token: Optional[str] = Header(None)) -> ProjectSnapshot:
+    try:
+        return repository().rename(project_id, workspace_token(x_workspace_token), body.name)
+    except AccessDenied as error:
+        raise HTTPException(status_code=404, detail="Project not found.") from error
+
+
+@app.delete("/api/projects/{project_id}", response_model=WorkspaceSnapshot)
+def delete_project(project_id: str, x_workspace_token: Optional[str] = Header(None)) -> WorkspaceSnapshot:
+    try:
+        return repository().delete(project_id, workspace_token(x_workspace_token),
+                                   Plan(tasks=seeded_tasks()), INTRODUCTORY_PROJECT_NAME)
+    except AccessDenied as error:
+        raise HTTPException(status_code=404, detail="Project not found.") from error
 
 
 @app.get("/api/workspace", response_model=WorkspaceSnapshot)
@@ -281,9 +329,30 @@ def update_project_task(project_id: str, task_id: str, body: TaskUpdateRequest,
             task_id, body.task, body.description, body.assignee, body.duration,
             body.start_date.isoformat(), body.predecessors,
         )
-        version = repository().commit_plan(project_id, token, body.expected_version, candidate, "task")
-        return ProjectSnapshot(project_id=snapshot.project_id, conversation_id=snapshot.conversation_id,
-                               version=version, plan=candidate, messages=snapshot.messages)
+        repository().commit_plan(project_id, token, body.expected_version, candidate, "task")
+        return repository().load(project_id, token)
+    except VersionConflict as error:
+        raise HTTPException(status_code=409, detail="The plan changed while the task was being saved. Reload and retry.") from error
+    except AccessDenied as error:
+        raise HTTPException(status_code=404, detail="Project not found.") from error
+    except PlanEditError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.post("/api/projects/{project_id}/tasks", response_model=ProjectSnapshot)
+def create_project_task(project_id: str, body: TaskCreateRequest,
+                        x_workspace_token: Optional[str] = Header(None)) -> ProjectSnapshot:
+    token = workspace_token(x_workspace_token)
+    try:
+        snapshot = repository().load(project_id, token)
+        if snapshot.version != body.expected_version:
+            raise VersionConflict()
+        candidate = PlanEditor(snapshot.plan).create_task(
+            body.task, body.description, body.assignee, body.duration,
+            body.start_date.isoformat(), body.predecessors,
+        )
+        repository().commit_plan(project_id, token, body.expected_version, candidate, "task")
+        return repository().load(project_id, token)
     except VersionConflict as error:
         raise HTTPException(status_code=409, detail="The plan changed while the task was being saved. Reload and retry.") from error
     except AccessDenied as error:

@@ -62,4 +62,15 @@ describe('task details modal', () => {
     expect(alert).toHaveTextContent('The task could not be saved')
     expect(alert).not.toHaveTextContent('internal parser detail')
   })
+
+  it('uses safe defaults for creation and does not expose an out-of-range derived date', () => {
+    render(<TaskDetailsModal task={null} tasks={[]} onClose={vi.fn()} onSave={vi.fn()} />)
+    expect(screen.getByRole('dialog')).toHaveAccessibleName('Add task')
+    expect(screen.getByLabelText('Task name')).toHaveFocus()
+    expect(screen.getByLabelText('Duration (days)')).toHaveValue(1)
+    expect(screen.getByText('No other tasks are available.')).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Start date'), { target: { value: '9999-12-31' } })
+    fireEvent.change(screen.getByLabelText('Duration (days)'), { target: { value: '2' } })
+    expect(screen.getByLabelText('End date')).toHaveValue('')
+  })
 })

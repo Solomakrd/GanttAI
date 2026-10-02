@@ -123,16 +123,23 @@ export async function fetchPlan(signal) {
 function snapshot(payload) {
   if (Array.isArray(payload?.tasks)) {
     const parsed = parsePlan(payload)
-    return { projectId: null, conversationId: null, version: 0, tasks: parsed.tasks, rejectedIds: parsed.rejectedIds, messages: [], token: null, legacy: true }
+    return { projectId: null, projectName: null, conversationId: null, version: 0, tasks: parsed.tasks, rejectedIds: parsed.rejectedIds, messages: [], token: null, legacy: true }
   }
   const parsed = parsePlan(payload?.plan, true)
-  if (typeof payload?.project_id !== 'string' || !Number.isInteger(payload.version) || !Array.isArray(payload.messages)) throw clientError('The API returned an invalid project snapshot.', 'invalidProject')
-  return { projectId: payload.project_id, conversationId: payload.conversation_id, version: payload.version, tasks: parsed.tasks, rejectedIds: [], messages: payload.messages, token: payload.workspace_token || null, legacy: false }
+  if (typeof payload?.project_id !== 'string' || typeof payload.project_name !== 'string' || !payload.project_name.trim() || !Number.isInteger(payload.version) || !Array.isArray(payload.messages)) throw clientError('The API returned an invalid project snapshot.', 'invalidProject')
+  return { projectId: payload.project_id, projectName: payload.project_name, conversationId: payload.conversation_id, version: payload.version, tasks: parsed.tasks, rejectedIds: [], messages: payload.messages, token: payload.workspace_token || null, legacy: false }
 }
 
 function workspaceProject(record) {
-  if (typeof record?.project_id !== 'string' || !Number.isInteger(record.version)) throw clientError('The API returned an invalid workspace.', 'invalidWorkspace')
-  return { projectId: record.project_id, version: record.version, createdAt: record.created_at }
+  if (typeof record?.project_id !== 'string' || typeof record.project_name !== 'string' || !record.project_name.trim() || !Number.isInteger(record.version)) throw clientError('The API returned an invalid workspace.', 'invalidWorkspace')
+  return { projectId: record.project_id, projectName: record.project_name, version: record.version, createdAt: record.created_at }
+}
+
+function workspace(payload, token) {
+  const result = snapshot(payload?.active_project)
+  result.workspaceProjects = payload.projects.map(workspaceProject)
+  result.token = token
+  return result
 }
 
 export async function loadWorkspace(signal) {
@@ -151,28 +158,19 @@ export async function loadWorkspace(signal) {
     response = await request('/api/projects', { method: 'POST', signal })
   }
   const payload = await response.json()
-  const result = token ? snapshot(payload.active_project) : snapshot(payload)
-  result.workspaceProjects = token ? payload.projects.map(workspaceProject) : [{ projectId: result.projectId, version: result.version }]
+  const result = token ? workspace(payload, token) : snapshot(payload)
+  result.workspaceProjects = token ? result.workspaceProjects : [{ projectId: result.projectId, projectName: result.projectName, version: result.version }]
   result.token = result.token || token
   if (result.token) localStorage.setItem('ganttai.workspaceToken', result.token)
   return result
 }
 
-export async function createProject(signal) {
-  let token = localStorage.getItem('ganttai.workspaceToken')
-  let workspaceReset = false
-  let response
-  try {
-    response = await request('/api/projects', { method: 'POST', signal, headers: token ? { 'X-Workspace-Token': token } : {} })
-  } catch (error) {
-    if (!token || error.status !== 404 || error.serverMessage !== 'Workspace not found.') throw error
-    localStorage.removeItem('ganttai.workspaceToken')
-    token = null
-    workspaceReset = true
-    response = await request('/api/projects', { method: 'POST', signal })
-  }
+export async function createProject(name, signal) {
+  const token = localStorage.getItem('ganttai.workspaceToken')
+  const response = await request('/api/projects', { method: 'POST', signal,
+    headers: token ? { 'Content-Type': 'application/json', 'X-Workspace-Token': token } : {},
+    body: token ? JSON.stringify({ name }) : undefined })
   const result = snapshot(await response.json())
-  result.workspaceReset = workspaceReset
   result.token = result.token || token
   if (result.token) localStorage.setItem('ganttai.workspaceToken', result.token)
   return result
@@ -183,6 +181,23 @@ export async function loadProject(projectId, token, signal) {
   const result = snapshot(await response.json())
   result.token = token
   return result
+}
+
+export async function renameProject(project, name, signal) {
+  const response = await request(`/api/projects/${project.projectId}`, {
+    method: 'PATCH', signal, headers: { 'Content-Type': 'application/json', 'X-Workspace-Token': project.token },
+    body: JSON.stringify({ name }),
+  })
+  const result = snapshot(await response.json())
+  result.token = project.token
+  return result
+}
+
+export async function deleteProject(project, signal) {
+  const response = await request(`/api/projects/${project.projectId}`, {
+    method: 'DELETE', signal, headers: { 'X-Workspace-Token': project.token },
+  })
+  return workspace(await response.json(), project.token)
 }
 
 export async function undoProject(project, signal) {
@@ -196,6 +211,16 @@ export async function undoProject(project, signal) {
 export async function updateProjectTask(project, taskId, values, signal) {
   const response = await request(`/api/projects/${project.projectId}/tasks/${encodeURIComponent(taskId)}`, {
     method: 'PATCH', signal, headers: { 'Content-Type': 'application/json', 'X-Workspace-Token': project.token },
+    body: JSON.stringify({ expected_version: project.version, ...values }),
+  })
+  const result = snapshot(await response.json())
+  result.token = project.token
+  return result
+}
+
+export async function createProjectTask(project, values, signal) {
+  const response = await request(`/api/projects/${project.projectId}/tasks`, {
+    method: 'POST', signal, headers: { 'Content-Type': 'application/json', 'X-Workspace-Token': project.token },
     body: JSON.stringify({ expected_version: project.version, ...values }),
   })
   const result = snapshot(await response.json())

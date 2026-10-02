@@ -9,6 +9,12 @@ function openImport() {
   fireEvent.click(screen.getByRole('button', { name: 'Import' }))
 }
 
+function submitNewProject(name = 'New workspace project') {
+  fireEvent.click(screen.getByRole('button', { name: 'New project' }))
+  fireEvent.change(screen.getByLabelText('Project name'), { target: { value: name } })
+  fireEvent.click(screen.getByRole('button', { name: 'Create project' }))
+}
+
 beforeEach(() => { vi.restoreAllMocks(); localStorage.clear() })
 afterEach(() => { cleanup() })
 
@@ -43,7 +49,7 @@ describe('plan view', () => {
 
   it('replaces a stale workspace token while loading', async () => {
     localStorage.setItem('ganttai.workspaceToken', 'stale-token')
-    const replacement = { project_id: 'p1', conversation_id: 'c1', workspace_token: 'fresh-token', version: 1, plan, messages: [] }
+    const replacement = { project_id: 'p1', project_name: 'Intro', conversation_id: 'c1', workspace_token: 'fresh-token', version: 1, plan, messages: [] }
     const fetch = vi.spyOn(global, 'fetch')
       .mockResolvedValueOnce({ ok: false, status: 404, json: async () => ({ detail: 'Workspace not found.' }) })
       .mockResolvedValueOnce({ ok: true, json: async () => replacement })
@@ -59,12 +65,13 @@ describe('plan view', () => {
   })
 
   it('keeps an empty plan usable', async () => {
-    const fetch = vi.spyOn(global, 'fetch').mockResolvedValue({ ok: true, json: async () => ({ project_id: 'p1', conversation_id: 'c1', workspace_token: 'token', version: 2, plan: { tasks: [] }, messages: [] }) })
+    const fetch = vi.spyOn(global, 'fetch').mockResolvedValue({ ok: true, json: async () => ({ project_id: 'p1', project_name: 'Empty', conversation_id: 'c1', workspace_token: 'token', version: 2, plan: { tasks: [] }, messages: [] }) })
     render(<App />)
     expect(await screen.findByText('No tasks in this plan')).toBeInTheDocument()
     const resetButton = screen.getByRole('button', { name: 'Reset' })
     const undoButton = screen.getByRole('button', { name: 'Undo' })
-    expect(resetButton.nextElementSibling).toBe(undoButton)
+    expect(resetButton.nextElementSibling).toBe(screen.getByRole('button', { name: 'Add task' }))
+    expect(resetButton.nextElementSibling.nextElementSibling).toBe(undoButton)
     expect(undoButton).toBeEnabled()
     fireEvent.click(undoButton)
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2))
@@ -93,7 +100,7 @@ describe('plan view', () => {
       const end = new Date(Date.UTC(2026, 0, 1 + dayOffset))
       return { id: `task-${index}`, task: `Task ${index + 1}`, description: '', assignee: `Owner ${index + 1}`, duration: 1, start_date: start.toISOString().slice(0, 10), end_date: end.toISOString().slice(0, 10), predecessors: index ? [`task-${index - 1}`] : [] }
     })
-    vi.spyOn(global, 'fetch').mockResolvedValue({ ok: true, json: async () => ({ project_id: 'wide-plan', conversation_id: 'c1', workspace_token: 'token', version: 1, plan: { tasks }, messages: [] }) })
+    vi.spyOn(global, 'fetch').mockResolvedValue({ ok: true, json: async () => ({ project_id: 'wide-plan', project_name: 'Wide', conversation_id: 'c1', workspace_token: 'token', version: 1, plan: { tasks }, messages: [] }) })
     const { container } = render(<App />)
     await screen.findAllByText('Task 24')
     expect(container.querySelectorAll('.task-table .task-row')).toHaveLength(24)
@@ -245,7 +252,7 @@ describe('plan view', () => {
     }
     vi.stubGlobal('WebSocket', Socket)
     vi.spyOn(global, 'fetch').mockResolvedValue({ ok: true, json: async () => ({
-      project_id: 'p1', conversation_id: 'c1', workspace_token: 'token', version: 1, plan, messages: [],
+      project_id: 'p1', project_name: 'Intro', conversation_id: 'c1', workspace_token: 'token', version: 1, plan, messages: [],
     }) })
     const { container } = render(<App />)
     await screen.findAllByText('First task')
@@ -269,9 +276,10 @@ describe('plan view', () => {
       .mockRejectedValueOnce(new Error('offline'))
     const { container } = render(<App />)
     await screen.findByText(/invalid task record/)
-    fireEvent.click(screen.getByRole('button', { name: 'New project' }))
+    submitNewProject()
     await screen.findByText(/Cannot reach the Plan API/)
-    expect(container.querySelector('.notice-stack').querySelectorAll('[role="alert"]')).toHaveLength(2)
+    expect(screen.getAllByRole('alert')).toHaveLength(2)
+    expect(screen.getByLabelText('Project name')).toHaveValue('New workspace project')
   })
 
   it('replaces the chart after upload, exports the displayed plan, and restores the seed on remount', async () => {
@@ -330,10 +338,11 @@ describe('plan view', () => {
     vi.stubGlobal('WebSocket', Socket)
     localStorage.clear()
     vi.spyOn(global, 'fetch').mockResolvedValue({ ok: true, json: async () => ({
-      project_id: 'p1', conversation_id: 'c1', workspace_token: 'token', version: 1, plan, messages: [],
+      project_id: 'p1', project_name: 'Intro', conversation_id: 'c1', workspace_token: 'token', version: 1, plan, messages: [],
     }) })
     render(<App />)
     await screen.findAllByText('First task')
+    await waitFor(() => expect(Socket.instance).toBeDefined())
     const updated = { ...plan.tasks[0], task: 'Updated by chat' }
     act(() => Socket.instance.emit({ type: 'complete', version: 2, plan: { tasks: [updated, plan.tasks[1]] }, message: 'Updated.' }))
     expect((await screen.findAllByText('Updated by chat')).length).toBeGreaterThan(0)
@@ -350,9 +359,9 @@ describe('plan view', () => {
       close() {}
     }
     vi.stubGlobal('WebSocket', Socket)
-    const first = { project_id: 'p1', conversation_id: 'c1', workspace_token: 'workspace-token', version: 1, plan, messages: [] }
-    const secondPlan = { tasks: [{ ...plan.tasks[0], id: 'other', task: 'Other project' }] }
-    const second = { project_id: 'p2', conversation_id: 'c2', workspace_token: 'workspace-token', version: 1, plan: secondPlan, messages: [] }
+    const first = { project_id: 'p1', project_name: 'First', conversation_id: 'c1', workspace_token: 'workspace-token', version: 1, plan, messages: [] }
+    const secondPlan = { tasks: [] }
+    const second = { project_id: 'p2', project_name: 'Second', conversation_id: 'c2', workspace_token: 'workspace-token', version: 1, plan: secondPlan, messages: [] }
     const fetch = vi.spyOn(global, 'fetch')
       .mockResolvedValueOnce({ ok: true, json: async () => first })
       .mockResolvedValueOnce({ ok: true, json: async () => second })
@@ -360,9 +369,11 @@ describe('plan view', () => {
 
     render(<App />)
     await screen.findAllByText('First task')
-    fireEvent.click(screen.getByRole('button', { name: 'New project' }))
-    expect((await screen.findAllByText('Other project')).length).toBeGreaterThan(0)
-    expect(fetch.mock.calls[1][1].headers).toEqual({ 'X-Workspace-Token': 'workspace-token' })
+    submitNewProject('Second')
+    expect(await screen.findByRole('heading', { level: 1, name: 'Second' })).toBeInTheDocument()
+    expect(screen.getByText('No tasks in this plan')).toBeInTheDocument()
+    expect(fetch.mock.calls[1][1].headers).toEqual({ 'Content-Type': 'application/json', 'X-Workspace-Token': 'workspace-token' })
+    expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({ name: 'Second' })
     expect(localStorage.getItem('ganttai.workspaceToken')).toBe('workspace-token')
 
     fireEvent.change(screen.getByLabelText('Active project'), { target: { value: 'p1' } })
@@ -370,25 +381,131 @@ describe('plan view', () => {
     expect(fetch.mock.calls[2][0]).toContain('/api/projects/p1')
   })
 
-  it('replaces a stale workspace token while creating a project', async () => {
-    const first = { project_id: 'p1', conversation_id: 'c1', workspace_token: 'stale-token', version: 1, plan, messages: [] }
-    const second = { project_id: 'p2', conversation_id: 'c2', workspace_token: 'fresh-token', version: 1, plan, messages: [] }
+  it('preserves a stale workspace and named-project draft when creation returns 404', async () => {
+    const first = { project_id: 'p1', project_name: 'First', conversation_id: 'c1', workspace_token: 'stale-token', version: 1, plan, messages: [] }
     const fetch = vi.spyOn(global, 'fetch')
       .mockResolvedValueOnce({ ok: true, json: async () => first })
       .mockResolvedValueOnce({ ok: false, status: 404, json: async () => ({ detail: 'Workspace not found.' }) })
-      .mockResolvedValueOnce({ ok: true, json: async () => second })
 
     render(<App />)
     await screen.findAllByText('First task')
-    fireEvent.click(screen.getByRole('button', { name: 'New project' }))
+    submitNewProject('Second')
 
-    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(3))
-    expect(fetch.mock.calls[1][1].headers).toEqual({ 'X-Workspace-Token': 'stale-token' })
-    expect(fetch.mock.calls[2][1].headers).toBeUndefined()
-    expect(localStorage.getItem('ganttai.workspaceToken')).toBe('fresh-token')
-    const projectSelect = screen.getByLabelText('Active project')
-    expect(projectSelect).toHaveValue('p2')
-    expect(projectSelect.querySelectorAll('option')).toHaveLength(1)
+    expect(await screen.findByRole('alert')).toHaveTextContent('Workspace not found')
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(fetch.mock.calls[1][1].headers).toEqual({ 'Content-Type': 'application/json', 'X-Workspace-Token': 'stale-token' })
+    expect(localStorage.getItem('ganttai.workspaceToken')).toBe('stale-token')
+    expect(screen.getByLabelText('Project name')).toHaveValue('Second')
+    expect(screen.getByRole('heading', { level: 1, name: 'First' })).toBeInTheDocument()
+  })
+
+  it('renames project metadata and preserves the version', async () => {
+    const project = { project_id: 'p1', project_name: 'First', conversation_id: 'c1', workspace_token: 'token', version: 2, plan, messages: [] }
+    const renamed = { ...project, project_name: 'Delivery' }
+    const fetch = vi.spyOn(global, 'fetch')
+      .mockResolvedValueOnce({ ok: true, json: async () => project })
+      .mockResolvedValueOnce({ ok: true, json: async () => renamed })
+    render(<App />)
+    await screen.findAllByText('First task')
+    fireEvent.click(screen.getByRole('button', { name: 'Rename project' }))
+    expect(screen.getByLabelText('Project name')).not.toHaveAttribute('maxlength')
+    fireEvent.change(screen.getByLabelText('Project name'), { target: { value: '  Delivery  ' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+    expect(await screen.findByRole('heading', { level: 1, name: 'Delivery' })).toBeInTheDocument()
+    expect(screen.getByText('2 tasks · version 2')).toBeInTheDocument()
+    expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({ name: 'Delivery' })
+  })
+
+  it('keeps a project rename draft after a request failure', async () => {
+    const project = { project_id: 'p1', project_name: 'First', conversation_id: 'c1', workspace_token: 'token', version: 2, plan, messages: [] }
+    vi.spyOn(global, 'fetch')
+      .mockResolvedValueOnce({ ok: true, json: async () => project })
+      .mockRejectedValueOnce(new Error('offline'))
+    render(<App />)
+    await screen.findAllByText('First task')
+    fireEvent.click(screen.getByRole('button', { name: 'Rename project' }))
+    fireEvent.change(screen.getByLabelText('Project name'), { target: { value: 'Unfinished rename' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Cannot reach')
+    expect(screen.getByLabelText('Project name')).toHaveValue('Unfinished rename')
+    expect(screen.getByRole('heading', { level: 1, name: 'First' })).toBeInTheDocument()
+  })
+
+  it('cancels deletion and preserves state when confirmed deletion fails', async () => {
+    const project = { project_id: 'p1', project_name: 'First', conversation_id: 'c1', workspace_token: 'token', version: 1, plan, messages: [] }
+    const fetch = vi.spyOn(global, 'fetch')
+      .mockResolvedValueOnce({ ok: true, json: async () => project })
+      .mockRejectedValueOnce(new Error('offline'))
+    render(<App />)
+    await screen.findAllByText('First task')
+    fireEvent.click(screen.getByRole('button', { name: 'Delete project' }))
+    const warning = screen.getByText(/tasks, versions, and chat history/)
+    expect(screen.getByRole('alertdialog')).toHaveAttribute('aria-describedby', warning.id)
+    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(fetch).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Delete project' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete permanently' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Cannot reach')
+    expect(screen.getAllByText('First task').length).toBeGreaterThan(0)
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+  })
+
+  it('deletes the current project and opens the returned replacement', async () => {
+    const project = { project_id: 'p1', project_name: 'First', conversation_id: 'c1', workspace_token: 'token', version: 1, plan, messages: [] }
+    const replacement = { project_id: 'p2', project_name: 'Ознакомительный проект', conversation_id: 'c2', version: 1, plan, messages: [] }
+    vi.spyOn(global, 'fetch')
+      .mockResolvedValueOnce({ ok: true, json: async () => project })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ active_project: replacement, projects: [
+        { project_id: 'p2', project_name: 'Ознакомительный проект', version: 1, created_at: '2026-10-02' },
+      ] }) })
+    render(<App />)
+    await screen.findAllByText('First task')
+    fireEvent.click(screen.getByRole('button', { name: 'Delete project' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete permanently' }))
+    expect(await screen.findByRole('heading', { level: 1, name: 'Ознакомительный проект' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Active project')).toHaveValue('p2')
+  })
+
+  it('creates a manual task as exactly one new project version', async () => {
+    const project = { project_id: 'p1', project_name: 'First', conversation_id: 'c1', workspace_token: 'token', version: 1, plan, messages: [] }
+    const created = { ...project, version: 2, plan: { tasks: [...plan.tasks, {
+      id: 'server-id', task: 'Manual task', description: '', assignee: 'Priya', duration: 1,
+      start_date: '2026-10-07', end_date: '2026-10-07', predecessors: ['one'],
+    }] } }
+    const fetch = vi.spyOn(global, 'fetch')
+      .mockResolvedValueOnce({ ok: true, json: async () => project })
+      .mockResolvedValueOnce({ ok: true, json: async () => created })
+    render(<App />)
+    await screen.findAllByText('First task')
+    fireEvent.click(screen.getByRole('button', { name: 'Add task' }))
+    expect(screen.getByLabelText('Start date')).toHaveValue('2026-10-05')
+    fireEvent.change(screen.getByLabelText('Task name'), { target: { value: 'Manual task' } })
+    fireEvent.change(screen.getByLabelText('Assignee'), { target: { value: 'Priya' } })
+    fireEvent.change(screen.getByLabelText('Start date'), { target: { value: '2026-10-07' } })
+    fireEvent.click(screen.getByLabelText('First task'))
+    fireEvent.click(screen.getByRole('button', { name: 'Create task' }))
+    expect((await screen.findAllByText('Manual task')).length).toBeGreaterThan(0)
+    expect(fetch.mock.calls[1][0]).toContain('/api/projects/p1/tasks')
+    expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual(expect.objectContaining({ expected_version: 1, predecessors: ['one'] }))
+    expect(screen.getByText('3 tasks · version 2')).toBeInTheDocument()
+  })
+
+  it('keeps a manual task draft and chart after a version conflict', async () => {
+    const project = { project_id: 'p1', project_name: 'First', conversation_id: 'c1', workspace_token: 'token', version: 1, plan, messages: [] }
+    vi.spyOn(global, 'fetch')
+      .mockResolvedValueOnce({ ok: true, json: async () => project })
+      .mockResolvedValueOnce({ ok: false, status: 409, json: async () => ({ detail: 'The plan changed while the task was being saved.' }) })
+    render(<App />)
+    await screen.findAllByText('First task')
+    fireEvent.click(screen.getByRole('button', { name: 'Add task' }))
+    fireEvent.change(screen.getByLabelText('Task name'), { target: { value: 'Unfinished task' } })
+    fireEvent.change(screen.getByLabelText('Assignee'), { target: { value: 'Priya' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Create task' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('plan changed')
+    expect(screen.getByLabelText('Task name')).toHaveValue('Unfinished task')
+    expect(screen.getByText('2 tasks · version 1')).toBeInTheDocument()
   })
 
   it('preserves workspace identity and project choices after undo', async () => {
@@ -400,12 +517,12 @@ describe('plan view', () => {
     }
     vi.stubGlobal('WebSocket', Socket)
     localStorage.setItem('ganttai.workspaceToken', 'workspace-token')
-    const active = { project_id: 'p1', conversation_id: 'c1', version: 2, plan, messages: [] }
+    const active = { project_id: 'p1', project_name: 'First', conversation_id: 'c1', version: 2, plan, messages: [] }
     const undone = { ...active, version: 3 }
     vi.spyOn(global, 'fetch')
       .mockResolvedValueOnce({ ok: true, json: async () => ({ active_project: active, projects: [
-        { project_id: 'p1', version: 2, created_at: '2026-09-30' },
-        { project_id: 'p2', version: 1, created_at: '2026-09-30' },
+        { project_id: 'p1', project_name: 'First', version: 2, created_at: '2026-09-30' },
+        { project_id: 'p2', project_name: 'Second', version: 1, created_at: '2026-09-30' },
       ] }) })
       .mockResolvedValueOnce({ ok: true, json: async () => undone })
 
@@ -419,7 +536,8 @@ describe('plan view', () => {
     expect(undoButton).not.toHaveTextContent('Undo')
     const resetButton = screen.getByRole('button', { name: 'Reset' })
     expect(undoButton.parentElement).toHaveClass('chart-controls')
-    expect(resetButton.nextElementSibling).toBe(undoButton)
+    expect(resetButton.nextElementSibling).toBe(screen.getByRole('button', { name: 'Add task' }))
+    expect(resetButton.nextElementSibling.nextElementSibling).toBe(undoButton)
     fireEvent.click(undoButton)
     await waitFor(() => expect(screen.getByLabelText('Active project')).toHaveValue('p1'))
     expect(screen.getByLabelText('Active project').querySelectorAll('option')).toHaveLength(2)
@@ -438,7 +556,7 @@ describe('plan view', () => {
     vi.stubGlobal('WebSocket', Socket)
     let finishImport
     const pendingImport = new Promise((resolve) => { finishImport = resolve })
-    const project = { project_id: 'p1', conversation_id: 'c1', workspace_token: 'token', version: 1, plan, messages: [] }
+    const project = { project_id: 'p1', project_name: 'Intro', conversation_id: 'c1', workspace_token: 'token', version: 1, plan, messages: [] }
     vi.spyOn(global, 'fetch')
       .mockResolvedValueOnce({ ok: true, json: async () => project })
       .mockReturnValueOnce(pendingImport)
@@ -461,7 +579,7 @@ describe('plan view', () => {
     const user = userEvent.setup()
     class Socket { constructor() { this.listeners = {} } addEventListener(name, callback) { this.listeners[name] = callback } send() {} close() {} }
     vi.stubGlobal('WebSocket', Socket)
-    const project = { project_id: 'p1', conversation_id: 'c1', workspace_token: 'token', version: 1, plan, messages: [] }
+    const project = { project_id: 'p1', project_name: 'Intro', conversation_id: 'c1', workspace_token: 'token', version: 1, plan, messages: [] }
     const changed = { ...plan.tasks[1], task: 'Updated task', description: 'More detail', assignee: 'Priya' }
     const fetch = vi.spyOn(global, 'fetch')
       .mockResolvedValueOnce({ ok: true, json: async () => project })
@@ -488,7 +606,7 @@ describe('plan view', () => {
   it('keeps the chart and modal input after a version conflict', async () => {
     class Socket { constructor() { this.listeners = {} } addEventListener(name, callback) { this.listeners[name] = callback } send() {} close() {} }
     vi.stubGlobal('WebSocket', Socket)
-    const project = { project_id: 'p1', conversation_id: 'c1', workspace_token: 'token', version: 1, plan, messages: [] }
+    const project = { project_id: 'p1', project_name: 'Intro', conversation_id: 'c1', workspace_token: 'token', version: 1, plan, messages: [] }
     vi.spyOn(global, 'fetch')
       .mockResolvedValueOnce({ ok: true, json: async () => project })
       .mockResolvedValueOnce({ ok: false, status: 409, json: async () => ({ detail: 'The plan changed while the task was being saved.' }) })
@@ -511,7 +629,7 @@ describe('plan view', () => {
       emit(payload) { this.listeners.message({ data: JSON.stringify(payload) }) }
     }
     vi.stubGlobal('WebSocket', Socket)
-    const project = { project_id: 'p1', conversation_id: 'c1', workspace_token: 'token', version: 1, plan, messages: [] }
+    const project = { project_id: 'p1', project_name: 'Intro', conversation_id: 'c1', workspace_token: 'token', version: 1, plan, messages: [] }
     vi.spyOn(global, 'fetch').mockResolvedValue({ ok: true, json: async () => project })
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: 'Edit First task details' }))

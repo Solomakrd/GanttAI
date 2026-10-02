@@ -6,14 +6,21 @@ function derivedEnd(start, duration) {
   const date = new Date(`${start}T00:00:00Z`)
   if (Number.isNaN(date.getTime())) return ''
   date.setUTCDate(date.getUTCDate() + duration - 1)
-  return date.toISOString().slice(0, 10)
+  const year = date.getUTCFullYear()
+  return year >= 1 && year <= 9999 ? date.toISOString().slice(0, 10) : ''
 }
 
 export function TaskDetailsModal({ task, tasks, onClose, onSave, disabled = false }) {
   const { t } = useI18n()
+  const creating = !task
+  const localToday = () => {
+    const now = new Date()
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+  }
+  const initialStart = tasks.length ? tasks.map((item) => item.start_date).sort()[0] : localToday()
   const [form, setForm] = useState({
-    task: task.task, description: task.description, assignee: task.assignee,
-    duration: String(task.duration), start_date: task.start_date, predecessors: task.predecessors,
+    task: task?.task || '', description: task?.description || '', assignee: task?.assignee || '',
+    duration: String(task?.duration || 1), start_date: task?.start_date || initialStart, predecessors: task?.predecessors || [],
   })
   const [error, setError] = useState(null)
   const [pending, setPending] = useState(false)
@@ -64,9 +71,9 @@ export function TaskDetailsModal({ task, tasks, onClose, onSave, disabled = fals
   const unavailable = pending || disabled
   return <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !pending) onClose() }}>
     <section ref={dialog} className="task-modal" role="dialog" aria-modal="true" aria-labelledby="task-modal-title" aria-describedby="task-modal-help" aria-busy={pending}>
-      <div className="modal-heading"><div><span className="eyebrow">{t('taskDetails')}</span><h2 id="task-modal-title">{t('editTask')}</h2></div><button type="button" className="modal-close" aria-label={t('closeTask')} disabled={pending} onClick={onClose}>&times;</button></div>
+      <div className="modal-heading"><div><span className="eyebrow">{t('taskDetails')}</span><h2 id="task-modal-title">{t(creating ? 'addTask' : 'editTask')}</h2></div><button type="button" className="modal-close" aria-label={t('closeTask')} disabled={pending} onClick={onClose}>&times;</button></div>
       <form onSubmit={submit}>
-        <p id="task-modal-help">{t('taskHelp')}</p>
+         <p id="task-modal-help">{t(creating ? 'createTaskHelp' : 'taskHelp')}</p>
         <div className="modal-fields">
           <label>{t('taskName')}<input ref={firstField} value={form.task} disabled={unavailable} onChange={(event) => set('task', event.target.value)} /></label>
           <label>{t('assignee')}<input value={form.assignee} disabled={unavailable} onChange={(event) => set('assignee', event.target.value)} /></label>
@@ -76,11 +83,11 @@ export function TaskDetailsModal({ task, tasks, onClose, onSave, disabled = fals
           <label className="description-field">{t('description')}<textarea rows="4" value={form.description} disabled={unavailable} onChange={(event) => set('description', event.target.value)} /></label>
         </div>
         <fieldset disabled={unavailable}><legend>{t('predecessors')}</legend>
-          <div className="predecessor-list">{tasks.filter((item) => item.id !== task.id).map((item) => <label key={item.id}><input type="checkbox" checked={form.predecessors.includes(item.id)} onChange={(event) => set('predecessors', event.target.checked ? [...form.predecessors, item.id] : form.predecessors.filter((id) => id !== item.id))} /> <span>{item.task}</span></label>)}</div>
-          {tasks.length === 1 && <p>{t('noOtherTasks')}</p>}
+          <div className="predecessor-list">{tasks.filter((item) => item.id !== task?.id).map((item) => <label key={item.id}><input type="checkbox" checked={form.predecessors.includes(item.id)} onChange={(event) => set('predecessors', event.target.checked ? [...form.predecessors, item.id] : form.predecessors.filter((id) => id !== item.id))} /> <span>{item.task}</span></label>)}</div>
+          {tasks.length === (creating ? 0 : 1) && <p>{t('noOtherTasks')}</p>}
         </fieldset>
         {error && <p className="modal-error" role="alert">{error.key ? t(error.key, error.values) : error.message}</p>}
-        <div className="modal-actions"><button type="button" disabled={pending} onClick={onClose}>{t('cancel')}</button><button type="submit" disabled={unavailable}>{t(pending ? 'saving' : 'saveChanges')}</button></div>
+        <div className="modal-actions"><button type="button" disabled={pending} onClick={onClose}>{t('cancel')}</button><button type="submit" disabled={unavailable}>{t(pending ? 'saving' : creating ? 'createTask' : 'saveChanges')}</button></div>
       </form>
     </section>
   </div>

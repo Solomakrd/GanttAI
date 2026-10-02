@@ -32,14 +32,25 @@ def test_migrations_jsonb_and_optimistic_locking_on_postgresql():
         backend = Path(__file__).resolve().parents[1]
         config = Config(str(backend / "alembic.ini"))
         config.set_main_option("script_location", str(backend / "alembic"))
+        command.upgrade(config, "20260930_02")
+        pre_migration_engine = create_engine(schema_url)
+        with pre_migration_engine.begin() as connection:
+            connection.execute(text("INSERT INTO workspaces (id, token_hash, created_at) VALUES ('legacy-workspace', :hash, now())"), {"hash": "0" * 64})
+            connection.execute(text("INSERT INTO projects (id, workspace_id, current_version, created_at) VALUES ('legacy-project', 'legacy-workspace', 1, now())"))
+        pre_migration_engine.dispose()
         command.upgrade(config, "head")
 
         engine = create_engine(schema_url)
         columns = {column["name"]: column["type"] for column in inspect(engine).get_columns("plan_versions")}
         assert isinstance(columns["plan"], JSONB)
+        project_columns = {column["name"]: column for column in inspect(engine).get_columns("projects")}
+        assert project_columns["name"]["nullable"] is False
+        assert project_columns["name"]["type"].length == 64
+        with engine.connect() as connection:
+            assert connection.scalar(text("SELECT count(*) FROM workspaces")) == 0
 
         repository = ProjectRepository(sessionmaker(engine, expire_on_commit=False))
-        token, project = repository.create(Plan(tasks=seeded_tasks()))
+        token, project = repository.create(Plan(tasks=seeded_tasks()), "PostgreSQL")
         changed = project.plan.model_copy(deep=True)
         changed.tasks[0].description = "PostgreSQL JSONB"
         assert repository.commit_plan(project.project_id, token, 1, changed, "test") == 2

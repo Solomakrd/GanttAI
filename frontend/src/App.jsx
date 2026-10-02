@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { createProject, loadProject, loadWorkspace, undoProject, updateProjectTask } from './api'
+import { createProject, createProjectTask, deleteProject, loadProject, loadWorkspace, renameProject, undoProject, updateProjectTask } from './api'
 import { GanttChart } from './components/GanttChart'
 import { ExcelControls } from './components/ExcelControls'
 import { PlanChat } from './components/PlanChat'
@@ -12,6 +12,44 @@ const initialState = { status: 'loading', tasks: [], rejectedIds: [], messages: 
 const WIDTHS_KEY = 'ganttai.columnWidths.v1'
 const WIDTH_LIMITS = { assistant: [280, 600], taskTable: [260, 600], taskName: [140, 500] }
 const MIN_TIMELINE_WIDTH = 180
+
+function ProjectDialog({ mode, name, pending, error, onName, onClose, onSubmit }) {
+  const { t } = useI18n()
+  const dialog = useRef(null)
+  const first = useRef(null)
+  const returnFocus = useRef(document.activeElement)
+  const closeRef = useRef(onClose)
+  const pendingRef = useRef(pending)
+  closeRef.current = onClose
+  pendingRef.current = pending
+
+  useEffect(() => {
+    first.current?.focus()
+    const keydown = (event) => {
+      if (event.key === 'Escape' && !pendingRef.current) closeRef.current()
+      if (event.key !== 'Tab' || !dialog.current) return
+      const controls = [...dialog.current.querySelectorAll('button:not(:disabled), input:not(:disabled)')]
+      if (event.shiftKey && document.activeElement === controls[0]) { event.preventDefault(); controls.at(-1)?.focus() }
+      else if (!event.shiftKey && document.activeElement === controls.at(-1)) { event.preventDefault(); controls[0]?.focus() }
+    }
+    document.addEventListener('keydown', keydown)
+    const previous = returnFocus.current
+    return () => { document.removeEventListener('keydown', keydown); if (previous?.isConnected) previous.focus() }
+  }, [])
+
+  const deleting = mode === 'delete'
+  const title = deleting ? t('deleteProject') : t(mode === 'rename' ? 'renameProject' : 'newProject')
+  return <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !pending) onClose() }}>
+    <section ref={dialog} className="project-modal" role={deleting ? 'alertdialog' : 'dialog'} aria-modal="true" aria-labelledby="project-modal-title" aria-describedby={deleting ? 'project-delete-warning' : undefined} aria-busy={pending}>
+      <div className="modal-heading"><div><span className="eyebrow">{t('planningWorkspace')}</span><h2 id="project-modal-title">{title}</h2></div><button type="button" className="modal-close" aria-label={t('closeProjectDialog')} disabled={pending} onClick={onClose}>&times;</button></div>
+      <form onSubmit={(event) => { event.preventDefault(); onSubmit() }}>
+        {deleting ? <p id="project-delete-warning">{t('deleteProjectWarning', { name })}</p> : <label>{t('projectName')}<input ref={first} value={name} disabled={pending} onChange={(event) => onName(event.target.value)} /></label>}
+        {error && <p className="modal-error" role="alert">{error.key ? t(error.key, error.values) : error.message}</p>}
+        <div className="modal-actions"><button ref={deleting ? first : undefined} type="button" disabled={pending} onClick={onClose}>{t('cancel')}</button><button className={deleting ? 'danger-button' : ''} type="submit" disabled={pending}>{t(pending ? 'saving' : deleting ? 'deletePermanently' : mode === 'rename' ? 'saveChanges' : 'createProject')}</button></div>
+      </form>
+    </section>
+  </div>
+}
 
 function clamp(value, [min, max]) {
   return Math.min(max, Math.max(min, value))
@@ -63,6 +101,10 @@ export default function App() {
   const [imported, setImported] = useState(false)
   const [notice, setNotice] = useState(null)
   const [selectedTaskId, setSelectedTaskId] = useState(null)
+  const [creatingTask, setCreatingTask] = useState(false)
+  const [projectDialog, setProjectDialog] = useState(null)
+  const [projectName, setProjectName] = useState('')
+  const [projectError, setProjectError] = useState(null)
   const [mobileSurface, setMobileSurface] = useState('plan')
   const loadPlan = useCallback(() => {
     const controller = new AbortController()
@@ -128,16 +170,57 @@ export default function App() {
 
   const startNewProject = async () => {
     if (busy) return
+    const name = projectName.trim()
+    if (!name) { setProjectError({ key: 'projectNameRequired' }); return }
     setAppBusy(true)
     setNotice(null)
+    setProjectError(null)
     try {
-      const project = await createProject()
+      const project = await createProject(name)
       setSelectedTaskId(null)
+      setCreatingTask(false)
       setImported(false)
       setState((current) => ({ status: 'ready', ...project,
-        workspaceProjects: project.workspaceReset ? [{ projectId: project.projectId, version: project.version }] : [...current.workspaceProjects, { projectId: project.projectId, version: project.version }], error: null }))
+        workspaceProjects: project.workspaceReset ? [{ projectId: project.projectId, projectName: project.projectName, version: project.version }] : [...current.workspaceProjects, { projectId: project.projectId, projectName: project.projectName, version: project.version }], error: null }))
+      setProjectDialog(null)
     } catch (error) {
-      setNotice(errorDescriptor(error, 'operationFailed'))
+      setProjectError(errorDescriptor(error, 'operationFailed'))
+    } finally {
+      setAppBusy(false)
+    }
+  }
+
+  const saveProjectName = async () => {
+    if (busy) return
+    const name = projectName.trim()
+    if (!name) { setProjectError({ key: 'projectNameRequired' }); return }
+    setAppBusy(true)
+    setProjectError(null)
+    try {
+      const project = await renameProject(state, name)
+      setState((current) => ({ ...current, ...project, token: current.token,
+        workspaceProjects: current.workspaceProjects.map((item) => item.projectId === project.projectId ? { ...item, projectName: project.projectName } : item) }))
+      setProjectDialog(null)
+    } catch (error) {
+      setProjectError(errorDescriptor(error, 'operationFailed'))
+    } finally {
+      setAppBusy(false)
+    }
+  }
+
+  const removeProject = async () => {
+    if (busy) return
+    setAppBusy(true)
+    setProjectError(null)
+    try {
+      const project = await deleteProject(state)
+      setSelectedTaskId(null)
+      setCreatingTask(false)
+      setImported(false)
+      setState({ status: 'ready', ...project, error: null })
+      setProjectDialog(null)
+    } catch (error) {
+      setProjectError(errorDescriptor(error, 'operationFailed'))
     } finally {
       setAppBusy(false)
     }
@@ -150,6 +233,7 @@ export default function App() {
     try {
       const project = await loadProject(projectId, state.token)
       setSelectedTaskId(null)
+      setCreatingTask(false)
       setImported(false)
       setState((current) => ({ status: 'ready', ...project, workspaceProjects: current.workspaceProjects, error: null }))
     } catch (error) {
@@ -180,7 +264,9 @@ export default function App() {
     const project = state
     setAppBusy(true)
     try {
-      const result = await updateProjectTask(project, selectedTaskId, values)
+      const result = selectedTaskId
+        ? await updateProjectTask(project, selectedTaskId, values)
+        : await createProjectTask(project, values)
       if (state.projectId !== project.projectId || state.version !== project.version || result.version !== project.version + 1) {
         const error = new Error(t('staleTask'))
         error.translationKey = 'staleTask'
@@ -190,6 +276,7 @@ export default function App() {
         workspaceProjects: current.workspaceProjects.map((item) => item.projectId === result.projectId ? { ...item, version: result.version } : item),
         status: 'ready', error: null }))
       setSelectedTaskId(null)
+      setCreatingTask(false)
     } finally {
       setAppBusy(false)
     }
@@ -197,7 +284,7 @@ export default function App() {
 
   const selectedTask = state.tasks.find((task) => task.id === selectedTaskId)
   const activeProjectIndex = Math.max(0, state.workspaceProjects.findIndex((project) => project.projectId === state.projectId))
-  const projectLabel = t('project', { number: activeProjectIndex + 1 })
+  const projectLabel = state.projectName || t('project', { number: activeProjectIndex + 1 })
   const loadError = errorDescriptor(state.error, 'loadFailedHelp')
 
   useEffect(() => {
@@ -209,11 +296,13 @@ export default function App() {
       <a className="brand" href="/" aria-label={t('home')}><span className="brand-mark" aria-hidden="true" /><span className="brand-name">GanttAI</span></a>
       <div className="project-switcher">
         <label htmlFor="active-project">{t('activeProject')}</label>
-        <select id="active-project" aria-label={t('activeProject')} value={state.projectId || ''} disabled={busy || !state.projectId} onChange={(event) => switchProject(event.target.value)}>{state.workspaceProjects.map((project, index) => <option key={project.projectId} value={project.projectId}>{t('project', { number: index + 1 })}</option>)}</select>
+        <div><select id="active-project" aria-label={t('activeProject')} value={state.projectId || ''} disabled={busy || !state.projectId} onChange={(event) => switchProject(event.target.value)}>{state.workspaceProjects.map((project, index) => <option key={project.projectId} value={project.projectId}>{project.projectName || t('project', { number: index + 1 })}</option>)}</select>
+        <button type="button" aria-label={t('renameProject')} disabled={busy || !state.projectId} onClick={() => { setProjectName(state.projectName); setProjectError(null); setProjectDialog('rename') }}>✎</button></div>
       </div>
       <div className="topbar-actions">
         <label className="language-control"><span>{t('language')}</span><select aria-label={t('language')} value={locale} onChange={(event) => setLocale(event.target.value)}><option value="ru">RU</option><option value="en">EN</option></select></label>
-        <button type="button" className="icon-action" aria-label={t('newProject')} disabled={busy || state.status === 'loading'} onClick={startNewProject}><span aria-hidden="true">＋</span></button>
+        <button type="button" className="icon-action" aria-label={t('newProject')} disabled={busy || state.status === 'loading'} onClick={() => { setProjectName(''); setProjectError(null); setProjectDialog('create') }}><span aria-hidden="true">＋</span></button>
+        <button type="button" className="icon-action danger-action" aria-label={t('deleteProject')} disabled={busy || !state.projectId} onClick={() => { setProjectName(state.projectName); setProjectError(null); setProjectDialog('delete') }}><svg className="button-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5" /></svg></button>
         <ExcelControls tasks={state.tasks} project={state} disabled={state.status !== 'ready' || busy} onOperation={setExcelBusy} onImport={(result) => {
           setImported(true)
           setSelectedTaskId(null)
@@ -232,7 +321,7 @@ export default function App() {
         <div className="workspace-heading"><div><span className="eyebrow">{t('planningWorkspace')}</span><h1>{projectLabel}</h1><p>{t('taskVersion', { count: state.tasks.length, version: state.version })}</p></div><span className="save-state"><i />{t(imported ? 'importSaved' : 'workspaceSaved')}</span></div>
         {state.status === 'loading' && <div className="message loading-message" role="status"><span className="spinner" />{t('loadingPlan')}</div>}
         {state.status === 'error' && <div className="message error-message" role="alert"><div><strong>{t('loadFailed')}</strong><span>{loadError.key ? t(loadError.key, loadError.values) : loadError.message}</span></div><button type="button" onClick={loadPlan}>{t('retry')}</button></div>}
-        {state.status === 'ready' && <GanttChart tasks={state.tasks} disabled={busy} onSelectTask={state.projectId ? setSelectedTaskId : undefined} onUndo={state.projectId ? undo : undefined} canUndo={state.version > 1} widths={effectiveWidths} taskTableMax={taskTableMax} mobile={mobile} onWidthChange={setWidth} onWidthReset={resetWidth} />}
+        {state.status === 'ready' && <GanttChart tasks={state.tasks} disabled={busy} onSelectTask={state.projectId ? setSelectedTaskId : undefined} onAddTask={state.projectId ? () => { setSelectedTaskId(null); setCreatingTask(true) } : undefined} onUndo={state.projectId ? undo : undefined} canUndo={state.version > 1} widths={effectiveWidths} taskTableMax={taskTableMax} mobile={mobile} onWidthChange={setWidth} onWidthReset={resetWidth} />}
       </section>
       {!mobile && <ResizeHandle className="workspace-resize" label={t('planAssistantBoundary')} value={effectiveWidths.assistant} min={WIDTH_LIMITS.assistant[0]} max={assistantMax} direction={-1} onChange={(value) => setWidth('assistant', value)} onReset={() => resetWidth('assistant')} />}
       <div id="assistant-panel" className="assistant-surface" role="tabpanel" aria-labelledby="assistant-tab">{state.status === 'ready' && state.projectId ? <PlanChat project={state} disabled={busy} onOperation={setChatBusy} onPlan={acceptChatPlan} /> : <div className="assistant-placeholder"><span className="spinner" />{t('preparingAssistant')}</div>}</div>
@@ -241,6 +330,7 @@ export default function App() {
       {notice && <div className="app-notice" role="alert">{notice.key ? t(notice.key, notice.values) : notice.message}</div>}
       {state.rejectedIds?.length > 0 && <div className="app-notice" role="alert">{t('rejectedTasks', { count: state.rejectedIds.length, ids: state.rejectedIds.join(', ') })}</div>}
     </div>}
-    {selectedTask && <TaskDetailsModal task={selectedTask} tasks={state.tasks} disabled={busy} onClose={() => setSelectedTaskId(null)} onSave={saveTask} />}
+    {(selectedTask || creatingTask) && <TaskDetailsModal task={selectedTask || null} tasks={state.tasks} disabled={busy} onClose={() => { setSelectedTaskId(null); setCreatingTask(false) }} onSave={saveTask} />}
+    {projectDialog && <ProjectDialog mode={projectDialog} name={projectName} pending={appBusy} error={projectError} onName={setProjectName} onClose={() => setProjectDialog(null)} onSubmit={projectDialog === 'create' ? startNewProject : projectDialog === 'rename' ? saveProjectName : removeProject} />}
   </main>
 }
