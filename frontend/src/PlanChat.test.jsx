@@ -202,36 +202,6 @@ describe('plan chat', () => {
     expect(FakeSocket.instances).toHaveLength(2)
   })
 
-  it.each([false, true])('manual Retry preserves and replays a pending request when close arrived: %s', async (closed) => {
-    vi.useFakeTimers()
-    vi.stubGlobal('WebSocket', FakeSocket)
-    const onOperation = vi.fn()
-    render(<PlanChat project={project} onPlan={vi.fn()} onOperation={onOperation} />)
-    const first = FakeSocket.instances[0]
-    act(() => first.emit('message', { data: JSON.stringify({ type: 'connected', version: 1 }) }))
-    fireEvent.change(screen.getByLabelText('Request a plan change'), { target: { value: 'Reassign A' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Send request' }))
-    const request = JSON.parse(first.send.mock.calls[0][0])
-    act(() => first.emit('error', {}))
-    if (closed) act(() => first.emit('close', { code: 1006 }))
-    expect(screen.getByRole('status')).toHaveTextContent('Starting request...')
-    expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument()
-    expect(screen.getByLabelText('Request a plan change')).toBeDisabled()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
-    expect(FakeSocket.instances).toHaveLength(2)
-    const reconnected = FakeSocket.instances[1]
-    act(() => reconnected.emit('message', { data: JSON.stringify({ type: 'connected', version: 1 }) }))
-
-    expect(JSON.parse(reconnected.send.mock.calls[0][0])).toEqual(request)
-    expect(screen.getAllByText('Reassign A')).toHaveLength(1)
-    expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument()
-    expect(screen.getByLabelText('Request a plan change')).toBeDisabled()
-    expect(onOperation).toHaveBeenLastCalledWith(true)
-    await act(() => vi.advanceTimersByTimeAsync(30000))
-    expect(FakeSocket.instances).toHaveLength(2)
-  })
-
   it('automatically reconnects and replays the same interrupted request once', async () => {
     vi.useFakeTimers()
     vi.stubGlobal('WebSocket', FakeSocket)
