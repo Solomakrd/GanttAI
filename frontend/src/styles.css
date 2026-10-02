@@ -33,7 +33,7 @@ button:disabled, input:disabled, textarea:disabled, select:disabled { cursor: no
 .project-switcher { display: grid; gap: 3px; min-width: 180px; padding-left: 24px; border-left: 1px solid rgba(255,255,255,.18); }
 .project-switcher label { color: #aeb9cf; font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
 .project-switcher > div { display: flex; align-items: center; gap: 5px; }
-.project-switcher select { width: 210px; min-height: 34px; padding: 5px 30px 5px 9px; border: 1px solid rgba(255,255,255,.25); border-radius: 7px; background: var(--navy-2); color: white; font-size: 13px; font-weight: 700; }
+.project-switcher select { width: 250px; min-height: 34px; padding: 5px 30px 5px 9px; border: 1px solid rgba(255,255,255,.25); border-radius: 7px; background: var(--navy-2); color: white; font-size: 13px; font-weight: 700; }
 .project-switcher button { width: 34px; height: 34px; flex: none; border: 1px solid rgba(255,255,255,.25); border-radius: 7px; background: transparent; color: white; }
 .topbar-actions { display: flex; align-items: center; gap: 8px; min-width: 0; margin-left: auto; }
 .language-control { display: flex; align-items: center; gap: 6px; color: #c2cbe0; font-size: 10px; font-weight: 700; text-transform: uppercase; }
@@ -60,14 +60,15 @@ button:disabled, input:disabled, textarea:disabled, select:disabled { cursor: no
 .assistant-surface { min-width: 0; min-height: 0; background: #f8f9fb; }
 .assistant-placeholder { height: 100%; display: flex; align-items: center; justify-content: center; gap: 9px; color: var(--muted); font-size: 13px; }
 
-.chart-card { min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; background: white; overflow: hidden; }
+.chart-card { container-type: inline-size; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; background: white; overflow: hidden; }
 .chart-toolbar { min-width: 0; min-height: 58px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 9px 18px 9px 24px; border-bottom: 1px solid var(--line); }
+.chart-toolbar-primary { min-width: 0; display: flex; align-items: center; gap: 14px; }
 .chart-toolbar h2 { display: inline; margin: 0 0 0 9px; color: var(--navy); font-size: 15px; }
-.chart-controls { min-width: 0; display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 11px; }
-.chart-controls > * { flex: none; }
-.chart-controls button { min-width: 32px; height: 32px; border: 1px solid var(--line); border-radius: 7px; background: white; color: var(--navy); font-weight: 700; }
+.chart-actions, .chart-controls { min-width: 0; display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 11px; }
+.chart-actions > *, .chart-controls > * { flex: none; }
+.chart-actions button, .chart-controls button { min-width: 32px; height: 32px; border: 1px solid var(--line); border-radius: 7px; background: white; color: var(--navy); font-weight: 700; }
 .chart-controls .fit-button { padding: 0 10px; background: var(--navy); color: white; }
-.chart-controls .add-task-button { width: auto; padding: 0 11px; border-color: var(--navy); background: var(--navy); color: white; }
+.chart-actions .add-task-button { width: auto; padding: 0 11px; border-color: var(--navy); background: var(--navy); color: white; }
 .timeline-scroll { min-height: 0; overflow: auto; overscroll-behavior: contain; }
 .timeline { position: relative; min-height: 100%; display: grid; grid-template-columns: var(--task-column) minmax(0, 1fr); align-content: start; }
 .task-table { position: sticky; z-index: 7; left: 0; width: var(--task-column); min-width: var(--task-column); border-right: 1px solid var(--line); background: white; box-shadow: 6px 0 14px rgba(12,32,77,.035); }
@@ -177,7 +178,13 @@ button:disabled, input:disabled, textarea:disabled, select:disabled { cursor: no
   .app-shell { grid-template-rows: auto 48px minmax(0,1fr); }
   .topbar { display: grid; grid-template-columns: minmax(0,1fr); gap: 5px; padding: 6px 8px; }.brand { display: none; }.project-switcher { width: 100%; min-width: 0; }.project-switcher select { max-width: none; }.project-switcher button { width: 32px; }.topbar-actions { width: 100%; gap: 4px; margin-left: 0; justify-content: flex-end; }.topbar-actions > button, .topbar-actions > .icon-action, .excel-controls > button { width: 36px; min-height: 36px; }.language-control select { width: 45px; min-height: 36px; padding-inline: 3px; }
   .task-heading { grid-template-columns: minmax(0,1fr) 62px; padding-inline: 8px; }.task-name { grid-template-columns: 6px minmax(0,1fr) 62px; gap: 6px; padding-inline: 8px; }.task-meta b { display: none; }
-  .chart-toolbar { grid-template-columns: auto minmax(0,1fr); display: grid; padding-inline: 12px; }.chart-toolbar h2 { display: none; }.chart-controls { width: 100%; overflow-x: auto; overscroll-behavior-x: contain; padding-bottom: 2px; scrollbar-width: thin; }.chart-footer { padding-inline: 12px; }.chart-footer > span:not(.date-range) { display: none; }
+  .chart-footer { padding-inline: 12px; }.chart-footer > span:not(.date-range) { display: none; }
   .modal-backdrop { align-items: end; padding: 0; }.task-modal, .import-modal, .project-modal { width: 100%; max-height: 94vh; border-radius: 12px 12px 0 0; }.modal-fields { grid-template-columns: 1fr; }.description-field { grid-column: auto; }.predecessor-list { grid-template-columns: 1fr; }
+}
+@container (max-width: 560px) {
+  .chart-toolbar { display: grid; grid-template-columns: minmax(0,1fr); gap: 7px; padding-inline: 12px; }
+  .chart-toolbar-primary { justify-content: space-between; }
+  .chart-toolbar h2 { display: none; }
+  .chart-controls { justify-self: end; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; } }

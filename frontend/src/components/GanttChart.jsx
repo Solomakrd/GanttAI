@@ -97,14 +97,18 @@ export function GanttChart({ tasks, onSelectTask, onAddTask, onUndo, canUndo = f
 
   return <section className="chart-card" aria-label={t('interactiveChart')}>
     <div className="chart-toolbar">
-       <div><span className="eyebrow">{t('timeline')}</span><h2>{t('deliveryPlan')}</h2></div>
+      <div className="chart-toolbar-primary">
+        <div><span className="eyebrow">{t('timeline')}</span><h2>{t('deliveryPlan')}</h2></div>
+        <div className="chart-actions">
+          {onAddTask && <button type="button" className="add-task-button" disabled={disabled} onClick={onAddTask}>{t('addTask')}</button>}
+          {onUndo && <button type="button" disabled={disabled || !canUndo} onClick={onUndo} aria-label={t('undo')}><span aria-hidden="true">↶</span></button>}
+        </div>
+      </div>
       <div className="chart-controls">
         <button type="button" onClick={() => setZoom((value) => Math.max(0.75, value - 0.25))} aria-label={t('zoomOut')}>−</button>
         <span>{Math.round(zoom * 100)}%</span>
         <button type="button" onClick={() => setZoom((value) => Math.min(1.75, value + 0.25))} aria-label={t('zoomIn')}>+</button>
-         <button type="button" className="fit-button" onClick={fitPlan}>{t('fitPlan')}</button>
-         {onAddTask && <button type="button" className="add-task-button" disabled={disabled} onClick={onAddTask}>{t('addTask')}</button>}
-         {onUndo && <button type="button" disabled={disabled || !canUndo} onClick={onUndo} aria-label={t('undo')}><span aria-hidden="true">↶</span></button>}
+        <button type="button" className="fit-button" onClick={fitPlan}>{t('fitPlan')}</button>
       </div>
     </div>
     {!tasks.length ? <div className="empty-chart"><span className="empty-mark">+</span><strong>{t('noTasks')}</strong><span>{t('noTasksHelp')}</span></div> : <>
