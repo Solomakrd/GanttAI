@@ -213,8 +213,7 @@ export default function App() {
       </div>
       <div className="topbar-actions">
         <label className="language-control"><span>{t('language')}</span><select aria-label={t('language')} value={locale} onChange={(event) => setLocale(event.target.value)}><option value="ru">RU</option><option value="en">EN</option></select></label>
-        {state.projectId && <button type="button" className="icon-action" disabled={busy || state.version <= 1} onClick={undo} aria-label={t('undo')}>↶<span>{t('undo')}</span></button>}
-        <button type="button" aria-label={t('newProject')} disabled={busy || state.status === 'loading'} onClick={startNewProject}><span aria-hidden="true">＋</span><span>{t('newProject')}</span></button>
+        <button type="button" className="icon-action" aria-label={t('newProject')} disabled={busy || state.status === 'loading'} onClick={startNewProject}><span aria-hidden="true">＋</span></button>
         <ExcelControls tasks={state.tasks} project={state} disabled={state.status !== 'ready' || busy} onOperation={setExcelBusy} onImport={(result) => {
           setImported(true)
           setSelectedTaskId(null)
@@ -234,6 +233,7 @@ export default function App() {
         {state.status === 'loading' && <div className="message loading-message" role="status"><span className="spinner" />{t('loadingPlan')}</div>}
         {state.status === 'error' && <div className="message error-message" role="alert"><div><strong>{t('loadFailed')}</strong><span>{loadError.key ? t(loadError.key, loadError.values) : loadError.message}</span></div><button type="button" onClick={loadPlan}>{t('retry')}</button></div>}
         {state.status === 'ready' && <GanttChart tasks={state.tasks} disabled={busy} onSelectTask={state.projectId ? setSelectedTaskId : undefined} widths={effectiveWidths} taskTableMax={taskTableMax} mobile={mobile} onWidthChange={setWidth} onWidthReset={resetWidth} />}
+        {state.status === 'ready' && state.projectId && <div className="chart-actions"><button type="button" className="icon-action" disabled={busy || state.version <= 1} onClick={undo} aria-label={t('undo')}><span aria-hidden="true">↶</span></button></div>}
       </section>
       {!mobile && <ResizeHandle className="workspace-resize" label={t('planAssistantBoundary')} value={effectiveWidths.assistant} min={WIDTH_LIMITS.assistant[0]} max={assistantMax} direction={-1} onChange={(value) => setWidth('assistant', value)} onReset={() => resetWidth('assistant')} />}
       <div id="assistant-panel" className="assistant-surface" role="tabpanel" aria-labelledby="assistant-tab">{state.status === 'ready' && state.projectId ? <PlanChat project={state} disabled={busy} onOperation={setChatBusy} onPlan={acceptChatPlan} /> : <div className="assistant-placeholder"><span className="spinner" />{t('preparingAssistant')}</div>}</div>
